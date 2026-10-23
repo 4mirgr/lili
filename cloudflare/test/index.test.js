@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseQuote } from "../src/index.js";
+import { parseDollarAmount, parseQuote } from "../src/index.js";
 
 test("parses a Bonbast quote", () => {
   const quote = parseQuote({
@@ -17,5 +17,12 @@ test("parses a Bonbast quote", () => {
 
 test("prefers last_modified", () => {
   assert.equal(parseQuote({ usd1: 100, usd2: 90, last_modified: "12:30" }).publishedAt, "12:30");
+});
+
+test("parses Persian and English dollar amounts", () => {
+  assert.equal(parseDollarAmount("۸۰ دلار"), 80);
+  assert.equal(parseDollarAmount("80 USD"), 80);
+  assert.equal(parseDollarAmount("۱٬۲۵۰٫۵"), 1250.5);
+  assert.equal(parseDollarAmount("قیمت ۸۰ دلار"), null);
 });
 

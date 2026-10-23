@@ -57,10 +57,27 @@ export function parseQuote(data) {
   };
 }
 
+export function parseDollarAmount(text) {
+  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
+  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const normalized = String(text ?? "")
+    .replace(/[۰-۹]/g, (digit) => String(persianDigits.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String(arabicDigits.indexOf(digit)))
+    .replace(/[٬,]/g, "")
+    .replace(/٫/g, ".")
+    .trim();
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*(?:دلار|usd|\$)?$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000) return null;
+  return amount;
+}
+
 async function latestDollar() {
   const commonHeaders = {
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
     "accept-language": "fa-IR,fa;q=0.9,en;q=0.7",
+    cookie: "cookieconsent_status=true; st_bb=0",
   };
   const homepage = await fetch(BONBAST_URL, { headers: commonHeaders });
   if (!homepage.ok) throw new Error(`ارتباط با Bonbast برقرار نشد (${homepage.status}).`);
@@ -73,6 +90,7 @@ async function latestDollar() {
       accept: "application/json, text/javascript, */*; q=0.01",
       "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
       "x-requested-with": "XMLHttpRequest",
+      origin: BONBAST_URL,
       referer: `${BONBAST_URL}/`,
     },
     body: new URLSearchParams({ param: token }),
@@ -118,21 +136,35 @@ async function handleUpdate(update, env) {
     return;
   }
 
-  if (text === BUTTON_TEXT || text === "استعلام قیمت") {
+  const requestedAmount = parseDollarAmount(text);
+  if (text === BUTTON_TEXT || text === "استعلام قیمت" || requestedAmount !== null) {
     try {
       await telegram(env, "sendChatAction", { chat_id: chatId, action: "typing" });
       const quote = await latestDollar();
-      const body = [
-        "💵 <b>آخرین قیمت دلار</b>",
-        "",
-        `🔴 فروش: <b>${quote.sell.toLocaleString("en-US")}</b> تومان`,
-        `🟢 خرید: <b>${quote.buy.toLocaleString("en-US")}</b> تومان`,
-        "",
-        `🕒 زمان استعلام: ${tehranNow()}`,
-        `🗓 زمان درج در سایت: ${quote.publishedAt}`,
-        "",
-        'منبع: <a href="https://www.bonbast.com">Bonbast.com</a>',
-      ].join("\n");
+      const body = requestedAmount === null
+        ? [
+            "💵 <b>آخرین قیمت دلار</b>",
+            "",
+            `🔴 فروش: <b>${quote.sell.toLocaleString("en-US")}</b> تومان`,
+            `🟢 خرید: <b>${quote.buy.toLocaleString("en-US")}</b> تومان`,
+            "",
+            `🕒 زمان استعلام: ${tehranNow()}`,
+            `🗓 زمان درج در سایت: ${quote.publishedAt}`,
+            "",
+            'منبع: <a href="https://www.bonbast.com">Bonbast.com</a>',
+          ].join("\n")
+        : [
+            "🧮 <b>محاسبه قیمت دلار</b>",
+            "",
+            `💵 مقدار: <b>${requestedAmount.toLocaleString("en-US")}</b> دلار`,
+            `🔴 نرخ فروش هر دلار: <b>${quote.sell.toLocaleString("en-US")}</b> تومان`,
+            `💰 مبلغ نهایی: <b>${Math.round(requestedAmount * quote.sell).toLocaleString("en-US")}</b> تومان`,
+            "",
+            `🕒 زمان استعلام: ${tehranNow()}`,
+            `🗓 زمان درج در سایت: ${quote.publishedAt}`,
+            "",
+            'منبع: <a href="https://www.bonbast.com">Bonbast.com</a>',
+          ].join("\n");
       await telegram(env, "sendMessage", {
         chat_id: chatId,
         text: body,
@@ -153,7 +185,7 @@ async function handleUpdate(update, env) {
 
   await telegram(env, "sendMessage", {
     chat_id: chatId,
-    text: "برای استعلام، دکمه «استعلام قیمت» را بزنید.",
+    text: "برای استعلام دکمه «استعلام قیمت» را بزنید یا مبلغی مثل «۸۰ دلار» بفرستید.",
     reply_markup: KEYBOARD,
   });
 }
