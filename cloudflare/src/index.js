@@ -32,15 +32,23 @@ function parseNumber(value, label) {
   return Number(normalized);
 }
 
-function publishedTime(data) {
-  if (String(data.last_modified ?? "").trim()) {
-    return String(data.last_modified).trim();
-  }
+function toPersianDigits(value) {
+  return String(value).replace(/\d/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]);
+}
 
+function publishedTime(data) {
   const required = ["year", "month", "day", "hour", "minute"];
   if (required.every((key) => data[key] !== undefined && data[key] !== "")) {
     const pad = (value) => String(value).padStart(2, "0");
-    return `${data.year}/${pad(data.month)}/${pad(data.day)} - ${pad(data.hour)}:${pad(data.minute)}:${pad(data.second ?? 0)}`;
+    return toPersianDigits(
+      `${data.year}/${pad(data.month)}/${pad(data.day)} - ${pad(data.hour)}:${pad(data.minute)}:${pad(data.second ?? 0)}`,
+    );
+  }
+
+  if (String(data.last_modified ?? "").trim()) {
+    const parsed = new Date(String(data.last_modified).trim());
+    if (!Number.isNaN(parsed.getTime())) return tehranNow(parsed);
+    return String(data.last_modified).trim();
   }
 
   const combined = [data.date, data.time].filter(Boolean).join(" - ");
@@ -108,8 +116,8 @@ async function telegram(env, method, payload) {
   if (!response.ok) throw new Error(`Telegram API error: ${response.status}`);
 }
 
-function tehranNow() {
-  return new Intl.DateTimeFormat("fa-IR-u-ca-gregory-nu-latn", {
+function tehranNow(date = new Date()) {
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-persian", {
     timeZone: "Asia/Tehran",
     year: "numeric",
     month: "2-digit",
@@ -118,7 +126,7 @@ function tehranNow() {
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
-  }).format(new Date()).replace("،", " -");
+  }).format(date).replace("،", " -");
 }
 
 async function handleUpdate(update, env) {

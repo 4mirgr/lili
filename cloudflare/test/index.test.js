@@ -11,12 +11,16 @@ test("parses a Bonbast quote", () => {
   assert.deepEqual(quote, {
     sell: 125500,
     buy: 124900,
-    publishedAt: "2026/10/23 - 17:08:09",
+    publishedAt: "۲۰۲۶/۱۰/۲۳ - ۱۷:۰۸:۰۹",
   });
 });
 
-test("prefers last_modified", () => {
-  assert.equal(parseQuote({ usd1: 100, usd2: 90, last_modified: "12:30" }).publishedAt, "12:30");
+test("prefers Bonbast's Jalali date components", () => {
+  const quote = parseQuote({
+    usd1: 100, usd2: 90, last_modified: "October 23, 2026 19:51",
+    year: 1405, month: 8, day: 1, hour: 23, minute: 21, second: 56,
+  });
+  assert.equal(quote.publishedAt, "۱۴۰۵/۰۸/۰۱ - ۲۳:۲۱:۵۶");
 });
 
 test("parses Persian and English dollar amounts", () => {
