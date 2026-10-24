@@ -43,7 +43,7 @@ const DB = (() => {
 const DEFAULT = () => ({
   v: 1, start: todayKey(),
   settings: { rate: 0.95, voice: '', newPerDay: 8, theme: 'auto' },
-  onCall: {}, done: {}, log: {}, srs: {}, userCards: [], gram: {}, pairs: {},
+  done: {}, log: {}, srs: {}, userCards: [], gram: {}, pairs: {},
   essays: [], drafts: {}, speaks: [], diag: null, p1i: 0, cardi: 0
 });
 let S = DEFAULT();
@@ -69,9 +69,11 @@ async function load() {
 let saveT;
 function save() {
   clearTimeout(saveT);
+  const key = stateKey();
+  const snapshot = JSON.parse(JSON.stringify(S));
   saveT = setTimeout(async () => {
-    try { await DB.set(stateKey(), JSON.parse(JSON.stringify(S))); }
-    catch (e) { try { localStorage.setItem('ld-' + stateKey(), JSON.stringify(S)); } catch (e2) { toast('ذخیره نشد: فضای مرورگر پر است'); } }
+    try { await DB.set(key, snapshot); }
+    catch (e) { try { localStorage.setItem('ld-' + key, JSON.stringify(snapshot)); } catch (e2) { toast('ذخیره نشد: فضای مرورگر پر است'); } }
   }, 150);
 }
 
@@ -159,25 +161,19 @@ function benchDue() {
 }
 function planFor(key) {
   const tasks = [];
-  if (S.onCall[key]) {
-    tasks.push({ k: 'srs', t: 'مرور کارت‌ها', m: 8, h: '#practice/srs' });
-    tasks.push({ k: 'pron', t: 'Shadowing کوتاه (۴ جمله)', m: 7, h: '#pron/shadow' });
-    tasks.push({ k: 'speak', t: 'Speaking Part 1', m: 7, h: '#speak/p1' });
-  } else {
-    const wd = new Date(key + 'T12:00:00').getDay(); // 0 Sun … 6 Sat
-    tasks.push({ k: 'srs', t: 'مرور کارت‌ها (SRS)', m: 8, h: '#practice/srs' });
-    if (wd !== 5) tasks.push({ k: 'pron', t: 'تلفظ: Shadowing یا جفت‌های کمینه', m: 10, h: '#pron' });
-    const rot = {
-      6: [{ k: 'speak', t: 'Speaking Part 2 + 3', m: 12, h: '#speak/p2' }, { k: 'grammar', t: 'گرامر هدفمند (۱۰ سؤال)', m: 10, h: '#practice/gram/weak' }],
-      0: [{ k: 'speak', t: 'روانی ۴/۳/۲ (یک موضوع، سه بار)', m: 12, h: '#speak/f432' }, { k: 'write', t: 'نوشتن: یک پاراگراف بدنه', m: 12, h: '#write' }],
-      1: [{ k: 'speak', t: 'نقش‌آفرینی موقعیت واقعی', m: 12, h: '#speak/pt' }, { k: 'grammar', t: 'گرامر هدفمند', m: 10, h: '#practice/gram/weak' }],
-      2: [{ k: 'speak', t: 'Speaking Part 1', m: 10, h: '#speak/p1' }, { k: 'write', t: 'نوشتن: نامه یا مقدمه + نتیجه‌گیری', m: 15, h: '#write' }],
-      3: [{ k: 'ai', t: 'گفتگوی صوتی با AI (پرامپت آماده)', m: 15, h: '#ai' }, { k: 'grammar', t: 'گرامر هدفمند', m: 7, h: '#practice/gram/weak' }],
-      4: [{ k: 'speak', t: 'Speaking Part 2 + 3', m: 12, h: '#speak/p2' }, { k: 'write', t: 'نوشتن: طرح (outline) یک Task 2', m: 10, h: '#write' }],
-      5: [{ k: 'write', t: 'متن کامل با زمان‌سنج (۴۰ دقیقه)', m: 40, h: '#write' }]
-    };
-    tasks.push(...rot[wd]);
-  }
+  const wd = new Date(key + 'T12:00:00').getDay(); // 0 Sun … 6 Sat
+  tasks.push({ k: 'srs', t: 'مرور کارت‌ها (SRS)', m: 8, h: '#practice/srs' });
+  if (wd !== 5) tasks.push({ k: 'pron', t: 'تلفظ: Shadowing یا جفت‌های کمینه', m: 10, h: '#pron' });
+  const rot = {
+    6: [{ k: 'speak', t: 'ارائه و بحث تکمیلی', m: 12, h: '#speak/p2' }, { k: 'grammar', t: 'گرامر هدفمند (۱۰ سؤال)', m: 10, h: '#practice/gram/weak' }],
+    0: [{ k: 'speak', t: 'روانی ۴/۳/۲ (یک موضوع، سه بار)', m: 12, h: '#speak/f432' }, { k: 'write', t: 'نوشتن: یک پاراگراف بدنه', m: 12, h: '#write' }],
+    1: [{ k: 'speak', t: 'نقش‌آفرینی موقعیت واقعی', m: 12, h: '#speak/pt' }, { k: 'grammar', t: 'گرامر هدفمند', m: 10, h: '#practice/gram/weak' }],
+    2: [{ k: 'speak', t: 'پرسش‌های کوتاه', m: 10, h: '#speak/p1' }, { k: 'write', t: 'نوشتن: نامه یا مقدمه + نتیجه‌گیری', m: 15, h: '#write' }],
+    3: [{ k: 'ai', t: 'گفتگوی صوتی با AI (پرامپت آماده)', m: 15, h: '#ai' }, { k: 'grammar', t: 'گرامر هدفمند', m: 7, h: '#practice/gram/weak' }],
+    4: [{ k: 'speak', t: 'ارائه و بحث تکمیلی', m: 12, h: '#speak/p2' }, { k: 'write', t: 'نوشتن: طرح یک متن استدلالی', m: 10, h: '#write' }],
+    5: [{ k: 'write', t: 'متن کامل با زمان‌سنج (۴۰ دقیقه)', m: 40, h: '#write' }]
+  };
+  tasks.push(...rot[wd]);
   if (key === todayKey() && benchDue()) tasks.push({ k: 'bench', t: 'ضبط benchmark ماهانه (همان کارت ثابت)', m: 4, h: '#speak/bench' });
   return tasks;
 }
@@ -217,7 +213,6 @@ function vToday() {
     ${!S.diag ? `<div class="card accent"><h2>قدم اول: آزمون تعیین سطح</h2><p>${fa(D.diag.length)} سؤال از A1 تا C1، سپس یک متن و یک ضبط گفتار. اگر از صفر شروع می‌کنی، «نمی‌دانم» انتخاب کن.</p><a class="btn" href="#diag">شروع آزمون</a></div>` : ''}
     <div class="card">
       <div class="spread"><h2>برنامهٔ امروز</h2><span class="pill">${fa(done)}/${fa(plan.length)} | حدود ${fa(total)} دقیقه</span></div>
-      <label class="switch"><input type="checkbox" data-act="oncall" ${S.onCall[k] ? 'checked' : ''}> امروز کشیک هستم (برنامهٔ ۲۰ تا ۲۵ دقیقه‌ای)</label>
       <div>${plan.map((t) => `
         <div class="task ${isDone(t.k) ? 'done' : ''}">
           <button class="chk" data-act="toggle" data-k="${t.k}" aria-label="انجام شد">${isDone(t.k) ? '✓' : ''}</button>
@@ -234,7 +229,6 @@ function vToday() {
       ${D.listen.map((l) => `<p><b class="en">${esc(l.t)}</b><br><span class="muted">${esc(l.n)}</span></p>`).join('')}
     </div>`);
 }
-ACT.oncall = (b) => { const k = todayKey(); if (b.checked) S.onCall[k] = true; else delete S.onCall[k]; save(); vToday(); };
 ACT.toggle = (b) => {
   const k = todayKey(); const key = b.dataset.k;
   S.done[k] = S.done[k] || {};
@@ -253,15 +247,15 @@ function vSpeak(mode, arg) {
   if (mode === 'p2') return speakSession({ mode: 'p2', item: arg ? D.cards.find((c) => c.id === arg) : D.cards[S.cardi % D.cards.length] });
   if (mode === 'p3') return speakSession({ mode: 'p3', item: D.cards.find((c) => c.id === arg) || D.cards[0] });
   if (mode === 'f432') return speakSession({ mode: 'f432', item: arg ? D.cards.find((c) => c.id === arg) : pick(D.cards), round: 0 });
-  if (mode === 'pt') return speakSession({ mode: 'pt', item: arg ? D.patient.find((c) => c.id === arg) : pick(D.patient) });
+  if (mode === 'pt') return speakSession({ mode: 'pt', item: arg ? D.roleplays.find((c) => c.id === arg) : pick(D.roleplays) });
   if (mode === 'bench') return speakSession({ mode: 'bench', item: D.bench });
   if (mode === 'archive') return vArchive();
   render(`
     <h1>گفتار</h1>
     <p class="muted">هر جلسه ضبط می‌شود. شنیدن صدای خودت مؤثرترین بازخورد رایگانی است که داری.</p>
     <div class="grid2">
-      <a class="tile" href="#speak/p1"><b>Part 1</b><span>سؤال‌های کوتاه، جواب ۲ تا ۳ جمله‌ای</span></a>
-      <a class="tile" href="#speak/p2"><b>Part 2 + 3</b><span>کارت، ۱ دقیقه آماده‌سازی، ۲ دقیقه صحبت</span></a>
+      <a class="tile" href="#speak/p1"><b>پرسش‌های کوتاه</b><span>جواب مستقیم، دلیل و مثال</span></a>
+      <a class="tile" href="#speak/p2"><b>ارائه و گفت‌وگو</b><span>آماده‌سازی، ارائه و پاسخ به پرسش</span></a>
       <a class="tile" href="#speak/f432"><b>روانی ۴/۳/۲</b><span>یک موضوع در ۴، ۳ و ۲ دقیقه</span></a>
       <a class="tile" href="#speak/pt"><b>موقعیت واقعی</b><span>اداره، خرید، شکایت و محیط کار</span></a>
       <a class="tile" href="#ai"><b>گفتگو با AI</b><span>پرامپت‌های آماده برای حالت صوتی</span></a>
@@ -272,13 +266,13 @@ function vSpeak(mode, arg) {
 
 function promptHTML(sess) {
   const it = sess.item;
-  if (sess.mode === 'p1') return `<div class="en prompt"><b>Topic: ${esc(it.t)}</b>${it.q.map((q) => `<div class="qline"><button class="say" data-act="say" data-text="${esc(q)}">▶</button><span>${esc(q)}</span></div>`).join('')}</div>
+  if (sess.mode === 'p1') return `<div class="en prompt"><b>Thema: ${esc(it.t)}</b>${it.q.map((q) => `<div class="qline"><button class="say" data-act="say" data-text="${esc(q)}">▶</button><span>${esc(q)}</span></div>`).join('')}</div>
     <p class="muted">به هر سؤال ۲ تا ۳ جمله جواب بده: جواب مستقیم، دلیل و یک مثال یا جزئیات. کل ضبط حدود ۳ تا ۴ دقیقه.</p>`;
-  if (sess.mode === 'p3') return `<div class="en prompt"><b>Part 3 — ${esc(it.t)}</b>${it.p3.map((q) => `<div class="qline"><button class="say" data-act="say" data-text="${esc(q)}">▶</button><span>${esc(q)}</span></div>`).join('')}</div>
-    <p class="muted">هر جواب حدود ۴۰ تا ۶۰ ثانیه: موضع، استدلال، مثال، و یک نکتهٔ مقابل (on the other hand).</p>`;
-  if (sess.mode === 'pt') return `<div class="en prompt">${esc(it.t)}</div><p class="muted">۲ تا ۳ دقیقه. از signposting استفاده کن: "First, let me explain…", "Does that make sense so far?"</p>`;
+  if (sess.mode === 'p3') return `<div class="en prompt"><b>Diskussion — ${esc(it.t)}</b>${it.p3.map((q) => `<div class="qline"><button class="say" data-act="say" data-text="${esc(q)}">▶</button><span>${esc(q)}</span></div>`).join('')}</div>
+    <p class="muted">هر جواب حدود ۴۰ تا ۶۰ ثانیه: موضع، استدلال، مثال و دیدگاه مقابل؛ از عبارت‌هایی مثل „Einerseits …, andererseits …“ استفاده کن.</p>`;
+  if (sess.mode === 'pt') return `<div class="en prompt">${esc(it.t)}</div><p class="muted">۲ تا ۳ دقیقه. گفت‌وگو را با عبارت‌های طبیعی سازمان بده: „Zunächst möchte ich …“، „Habe ich Sie richtig verstanden?“ و „Wie wäre es, wenn …?“</p>`;
   const rounds = sess.mode === 'f432' ? `<p><span class="pill on">دور ${fa(sess.round + 1)} از ۳ — ${fa([4, 3, 2][sess.round])} دقیقه</span></p>` : '';
-  return `${rounds}<div class="en prompt"><b>${esc(it.t)}</b><div class="muted">You should say:</div><ul>${it.b.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  return `${rounds}<div class="en prompt"><b>${esc(it.t)}</b><div class="muted">Sprechen Sie über:</div><ul>${it.b.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
 }
 
 function speakSession(sess) {
@@ -356,7 +350,7 @@ function speakSession(sess) {
   ACT.nextItem = () => {
     if (sess.mode === 'p1') { S.p1i++; save(); speakSession({ mode: 'p1', item: D.part1[S.p1i % D.part1.length] }); }
     else if (sess.mode === 'p2') { S.cardi++; save(); speakSession({ mode: 'p2', item: D.cards[S.cardi % D.cards.length] }); }
-    else speakSession({ mode: sess.mode, item: pick(D.patient.filter((x) => x !== sess.item)) });
+    else speakSession({ mode: sess.mode, item: pick(D.roleplays.filter((x) => x !== sess.item)) });
   };
   ACT.sSave = async () => {
     if (!result) return;
@@ -437,7 +431,7 @@ function vPron(sub, id) {
 }
 function vShadowSet(id, todays) {
   const set = D.shadow.find((s) => s.id === id) || D.shadow[0];
-  const items = todays && S.onCall[todayKey()] ? set.items.slice(0, 4) : set.items;
+  const items = set.items;
   render(`<a class="back" href="#pron">→ تلفظ</a><h1>${esc(set.t)}</h1>
     <div class="card soft"><p>${esc(set.n)}</p><p class="muted">حروف بزرگ = هجای تکیه‌دار | | = مرز chunk و مکث کوتاه | _ = اتصال</p>
     <div class="row"><span class="muted">سرعت:</span>${[0.7, 0.85, 1].map((r) => `<button class="btn sub small" data-act="rate" data-r="${r}">${r === 1 ? 'عادی' : r}</button>`).join('')}</div></div>
@@ -595,8 +589,8 @@ function srsSession() {
 function vAddCard() {
   render(`<a class="back" href="#practice">→ تمرین</a><h1>کارت جدید</h1>
     <div class="card"><p class="muted">برای اصلاحاتی که مربی یا خودت پیدا کرده‌ای. بهترین فرمت: جلو = جملهٔ غلط یا جای‌خالی؛ پشت = نسخهٔ درست.</p>
-      <p>جلو:</p><textarea class="short" id="cf" placeholder="I am agree with you. → ?"></textarea>
-      <p>پشت:</p><textarea class="short" id="cb" placeholder="I agree with you."></textarea>
+      <p>جلو:</p><textarea class="short" id="cf" placeholder="Ich helfe den Mann. → ?"></textarea>
+      <p>پشت:</p><textarea class="short" id="cb" placeholder="Ich helfe dem Mann."></textarea>
       <p>توضیح (اختیاری، فارسی):</p><input type="text" id="ce" style="width:100%">
       <button class="btn" style="margin-top:10px" data-act="addCard">افزودن</button></div>
     <div class="card"><h3>کارت‌های خودت (${fa(S.userCards.length)})</h3>${S.userCards.slice().reverse().slice(0, 30).map((c) => `<div class="sent en">${esc(c.f)}<br><b>${esc(c.b)}</b> <button class="say" data-act="delCard" data-id="${c.id}">حذف</button></div>`).join('') || '<p class="muted">—</p>'}</div>`);
@@ -681,7 +675,7 @@ function writeEditor(pid) {
   let running = false, tick = null, last = 0;
   render(`<a class="back" href="#write">→ نوشتار</a>
     <div class="card"><div class="en prompt">${esc(w.t)}</div>
-      ${w.k === 'task2' ? `<details style="margin-top:8px"><summary>قالب پیشنهادی</summary><p class="muted">مقدمه (بازنویسی سؤال + موضع روشن) → بدنهٔ ۱ (ایدهٔ اصلی + توضیح + مثال) → بدنهٔ ۲ → نتیجه‌گیری (تکرار موضع، بدون ایدهٔ جدید). ۴ پاراگراف، ۲۶۰ تا ۳۰۰ کلمه. در روزهای کوتاه فقط یک پاراگراف بدنه بنویس.</p></details>` : ''}
+      ${w.k === 'essay' ? `<details style="margin-top:8px"><summary>قالب پیشنهادی</summary><p class="muted">Einleitung → موضع روشن → دو استدلال با مثال → دیدگاه مقابل → Schluss. برای B2 ارتباط منطقی، دامنه واژگان و درستی ساختار مهم‌تر از طول غیرضروری متن است.</p></details>` : ''}
     </div>
     <div class="card"><div class="spread"><div class="timer" id="wt" style="font-size:1.6rem">${mmss(kind.min * 60 - dr.sec)}</div>
       <div class="row"><button class="btn small" data-act="wGo">شروع</button><span class="muted" id="wc">${fa(wordCount(dr.text))} / ${fa(kind.words)} کلمه</span></div></div>
@@ -775,7 +769,7 @@ Please analyse this as my German coach: estimate my CEFR level per skill, identi
       <p class="muted" style="margin-top:8px">این تست کوتاه است و فقط دانش گرامر و واژگان را می‌سنجد. اعتبارش محدود است؛ تصویر کامل بعد از Writing و Speaking به دست می‌آید.</p></div>
     <div class="card"><h3>مرحلهٔ ۲ و ۳</h3>
       <div class="task ${wEss ? 'done' : ''}"><span class="chk">${wEss ? '✓' : ''}</span><a class="ttl" href="#write/e/diag">Writing Task 2 تعیین سطح (۴۰ دقیقه)</a></div>
-      <div class="task ${bench ? 'done' : ''}"><span class="chk">${bench ? '✓' : ''}</span><a class="ttl" href="#speak/bench">ضبط Speaking Part 2 (benchmark اول)</a></div></div>
+      <div class="task ${bench ? 'done' : ''}"><span class="chk">${bench ? '✓' : ''}</span><a class="ttl" href="#speak/bench">ضبط معیار اولیه گفتار</a></div></div>
     <div class="card"><h3>گزارش برای مربی</h3><p class="muted">بعد از انجام هر سه بخش، گزارش را در گفتگو با مربی هوش مصنوعی پیست کن.</p>
       <pre class="copybox" id="rep">${esc(report)}</pre><div class="row"><button class="btn" data-act="copy" data-src="#rep">کپی گزارش</button><a class="btn sub" href="#diag/retake">آزمون مجدد</a></div></div>`);
 }

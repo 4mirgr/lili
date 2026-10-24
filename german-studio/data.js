@@ -53,7 +53,7 @@ window.DATA = {
     {id:'k03',t:'Nehmen Sie Stellung zum Thema soziale Medien.',b:['eigene Erfahrung','Vorteile','Nachteile','Ihre Empfehlung'],p3:['Brauchen wir strengere Regeln?','Wie beeinflussen Algorithmen Meinungen?','Was bedeutet digitale Kompetenz?']}
   ],
   bench:{id:'bench',t:'Stellen Sie sich vor und erklären Sie ausführlich, warum Sie Deutsch lernen.',b:['persönlicher Hintergrund','Ziele','bisherige Erfahrung','Plan für die nächsten Monate']},
-  patient:[{id:'r1',t:'Sie sind neu in Berlin. Fragen Sie höflich nach dem Weg zum Bürgeramt und klären Sie Öffnungszeiten und Dokumente.'},{id:'r2',t:'Sie haben ein Problem mit einer Online-Bestellung. Erklären Sie das Problem und verhandeln Sie eine Lösung.'},{id:'r3',t:'Sie präsentieren im Team einen Vorschlag für flexiblere Arbeitszeiten und reagieren auf Einwände.'}],
+  roleplays:[{id:'r1',t:'Sie sind neu in Berlin. Fragen Sie höflich nach dem Weg zum Bürgeramt und klären Sie Öffnungszeiten und Dokumente.'},{id:'r2',t:'Sie haben ein Problem mit einer Online-Bestellung. Erklären Sie das Problem und verhandeln Sie eine Lösung.'},{id:'r3',t:'Sie präsentieren im Team einen Vorschlag für flexiblere Arbeitszeiten und reagieren auf Einwände.'}],
   selfcheck:['بیش از دو ثانیه مکث داشتم','جایگاه فعل را اشتباه کردم','آرتیکل یا حالت اسم اشتباه بود','واژگانم تکراری بود','منظورم را کامل و منظم منتقل کردم'],
   writing: [
     {id:'diag',k:'essay',t:'Schreiben Sie über Ihre Motivation, Deutsch zu lernen, Ihre bisherigen Erfahrungen und Ihre Ziele. Begründen Sie Ihre Aussagen.'},
