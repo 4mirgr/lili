@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lili-deutsch-v5';
+const CACHE_NAME = 'lili-deutsch-v6';
 const APP_SHELL = [
   './',
   './index.html',

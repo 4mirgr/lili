@@ -557,7 +557,8 @@ const allCards = () => D.deck.map((c) => ({ ...c, src: 'deck' })).concat(S.userC
 function srsQueue() {
   const today = dayNum();
   const cards = allCards();
-  const due = cards.filter((c) => S.srs[c.id] && S.srs[c.id].due <= today);
+  const isDue = (state) => typeof state.due === 'string' ? Date.parse(state.due) <= Date.now() : state.due <= today;
+  const due = cards.filter((c) => S.srs[c.id] && isDue(S.srs[c.id]));
   const introducedToday = cards.filter((c) => S.srs[c.id] && S.srs[c.id].first === today).length;
   const fresh = cards.filter((c) => !S.srs[c.id]);
   // user cards (from your own mistakes) come first among new cards
@@ -566,18 +567,10 @@ function srsQueue() {
 }
 function grade(card, g) {
   const today = dayNum();
-  const s = S.srs[card.id] || { ivl: 0, ef: 2.5, reps: 0, lapses: 0, first: today };
-  if (g === 0) { s.reps = 0; s.lapses++; s.ivl = 0; s.ef = Math.max(1.3, s.ef - 0.2); }
-  else {
-    if (g === 1) { s.ivl = Math.max(1, Math.round(s.ivl * 1.2)); s.ef = Math.max(1.3, s.ef - 0.15); }
-    else if (s.reps === 0) s.ivl = g === 3 ? 4 : 1;
-    else if (s.reps === 1) s.ivl = g === 3 ? 6 : 3;
-    else s.ivl = Math.round(s.ivl * s.ef * (g === 3 ? 1.3 : 1));
-    if (g === 3) s.ef += 0.15;
-    s.reps++;
-  }
-  s.due = today + s.ivl;
-  S.srs[card.id] = s;
+  const old = S.srs[card.id];
+  const base = old && typeof old.due === 'string' ? old : LearningEngine.createReviewCard();
+  const reviewed = LearningEngine.reviewCard(base, g + 1);
+  S.srs[card.id] = Object.assign(reviewed, { first: old?.first ?? today, reps: reviewed.repetitions, ivl: reviewed.intervalDays });
   save();
 }
 function vPractice(sub, arg) {
