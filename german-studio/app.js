@@ -44,7 +44,7 @@ const DEFAULT = () => ({
   v: 1, start: todayKey(),
   settings: { rate: 0.95, voice: '', newPerDay: 8, theme: 'auto' },
   done: {}, log: {}, srs: {}, userCards: [], gram: {}, pairs: {},
-  essays: [], drafts: {}, writingCycles: {}, speaks: [], diag: null, p1i: 0, cardi: 0,
+  essays: [], drafts: {}, beginnerWriting: {}, writingCycles: {}, speaks: [], highlights: [], lessonProgress: {}, diag: null, p1i: 0, cardi: 0,
   curriculum: { completed: {}, skillScores: {}, examAttempts: [] }
 });
 let S = DEFAULT();
@@ -68,6 +68,8 @@ async function load() {
   S.settings = Object.assign(DEFAULT().settings, S.settings || {});
 }
 let saveT;
+let syncT;
+let applyingRemote = false;
 function save() {
   clearTimeout(saveT);
   const key = stateKey();
@@ -76,6 +78,12 @@ function save() {
     try { await DB.set(key, snapshot); }
     catch (e) { try { localStorage.setItem('ld-' + key, JSON.stringify(snapshot)); } catch (e2) { toast('ذخیره نشد: فضای مرورگر پر است'); } }
   }, 150);
+  if (!applyingRemote && window.SyncClient?.isLoggedIn()) {
+    clearTimeout(syncT);
+    syncT = setTimeout(() => SyncClient.push(snapshot).catch((error) => {
+      if (error.message === 'version_conflict') toast('نسخهٔ دیگری ذخیره شده؛ از تنظیمات همگام‌سازی کن');
+    }), 1200);
+  }
 }
 
 /* ---------------- ui helpers ---------------- */
@@ -165,6 +173,11 @@ function planFor(key) {
   const wd = new Date(key + 'T12:00:00').getDay(); // 0 Sun … 6 Sat
   tasks.push({ k: 'srs', t: 'مرور کارت‌ها (SRS)', m: 8, h: '#practice/srs' });
   if (wd !== 5) tasks.push({ k: 'pron', t: 'تلفظ: Shadowing یا جفت‌های کمینه', m: 10, h: '#pron' });
+  const beginner = nextBeginnerLesson();
+  if (beginner) {
+    tasks.push({ k: 'lesson-' + beginner.id, t: `درس قدم‌به‌قدم: ${beginner.title}`, m: beginner.minutes, h: '#lesson/' + beginner.id });
+    return tasks;
+  }
   const rot = {
     6: [{ k: 'speak', t: 'ارائه و بحث تکمیلی', m: 12, h: '#speak/p2' }, { k: 'grammar', t: 'گرامر هدفمند (۱۰ سؤال)', m: 10, h: '#practice/gram/weak' }],
     0: [{ k: 'speak', t: 'روانی ۴/۳/۲ (یک موضوع، سه بار)', m: 12, h: '#speak/f432' }, { k: 'write', t: 'نوشتن: یک پاراگراف بدنه', m: 12, h: '#write' }],
@@ -182,17 +195,20 @@ function planFor(key) {
 /* ---------------- router ---------------- */
 let cleanup = null;
 function route() {
+  pendingHighlight = '';
+  $('#highlightBtn')?.classList.remove('show');
   if (cleanup) { try { cleanup(); } catch (e) { /* ignore */ } cleanup = null; }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const parts = (location.hash.slice(1) || 'today').split('/');
   const name = parts[0];
-  const views = { today: vToday, path: vPath, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI };
+  const views = { today: vToday, path: vPath, lesson: vLesson, highlights: vHighlights, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI };
   (views[name] || vToday)(...parts.slice(1));
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === name));
-  $('#daybadge').textContent = `${activeProfile().name} | روز ${fa(dayNum() - dayNum(S.start) + 1)} | ماه ${fa(monthNo())} از ۲۴`;
+  const account = window.SyncClient?.currentUser();
+  $('#daybadge').textContent = `${account?.user_metadata?.display_name || account?.email || activeProfile().name} | روز ${fa(dayNum() - dayNum(S.start) + 1)} | ماه ${fa(monthNo())} از ۲۴`;
   window.scrollTo(0, 0);
 }
-const render = (html) => { $('#view').innerHTML = html; };
+const render = (html) => { $('#view').innerHTML = html; requestAnimationFrame(applySavedHighlights); };
 const ACT = {};
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
@@ -203,6 +219,74 @@ document.addEventListener('click', (e) => {
 ACT.say = (b) => speak(b.dataset.text, b.dataset.rate ? Number(b.dataset.rate) : undefined);
 ACT.copy = (b) => copyText(b.dataset.text || $(b.dataset.src).textContent);
 
+/* ================= HIGHLIGHTS ================= */
+let pendingHighlight = '';
+document.addEventListener('selectionchange', () => {
+  const selection = window.getSelection();
+  const text = String(selection || '').replace(/\s+/g, ' ').trim();
+  const inside = selection?.anchorNode && $('#view')?.contains(selection.anchorNode);
+  if (inside && text.length >= 3 && text.length <= 600) pendingHighlight = text;
+  $('#highlightBtn')?.classList.toggle('show', !!(inside && text.length >= 3 && text.length <= 600));
+});
+function highlightText(root, quote, id) {
+  if (!root || !quote || root.querySelector(`mark[data-highlight-id="${CSS.escape(id)}"]`)) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) { return /^(SCRIPT|STYLE|TEXTAREA|INPUT|BUTTON|MARK)$/.test(node.parentElement?.tagName || '') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; }
+  });
+  let node;
+  while ((node = walker.nextNode())) {
+    const index = node.nodeValue.indexOf(quote);
+    if (index < 0) continue;
+    const range = document.createRange(); range.setStart(node, index); range.setEnd(node, index + quote.length);
+    const mark = document.createElement('mark'); mark.className = 'user-highlight'; mark.dataset.highlightId = id;
+    range.surroundContents(mark); return;
+  }
+}
+function applySavedHighlights() {
+  if (location.hash.startsWith('#highlights')) return;
+  (S.highlights || []).filter((h) => h.route === (location.hash || '#today')).forEach((h) => highlightText($('#view'), h.quote, h.id));
+}
+ACT.addHighlight = () => {
+  const quote = pendingHighlight.trim(); if (!quote) return toast('ابتدا بخشی از متن را انتخاب کن');
+  const note = prompt('یادداشت برای این هایلایت (اختیاری):', '') ?? '';
+  S.highlights = S.highlights || [];
+  S.highlights.unshift({ id: uid(), quote, note: note.trim().slice(0, 1000), route: location.hash || '#today', title: document.querySelector('#view h1, #view h2')?.textContent || 'مطلب', createdAt: new Date().toISOString() });
+  pendingHighlight = ''; window.getSelection()?.removeAllRanges(); $('#highlightBtn').classList.remove('show'); save(); applySavedHighlights(); toast('هایلایت ذخیره شد');
+};
+function vHighlights() {
+  const items = S.highlights || [];
+  render(`<h1>هایلایت‌های من</h1><div class="card soft"><p>متن دلخواه را در هر صفحه انتخاب کن و روی «ذخیره هایلایت» بزن. هایلایت‌ها فقط در حساب خودت ذخیره می‌شوند.</p></div>
+    ${items.length ? items.map((h) => `<article class="card"><div class="spread"><span class="pill">${esc(h.title)}</span><span class="muted">${esc((h.createdAt || '').slice(0, 10))}</span></div><p class="highlight-quote">${esc(h.quote)}</p>${h.note ? `<p class="muted">${esc(h.note)}</p>` : ''}<div class="row"><a class="btn sub small" href="${esc(h.route || '#today')}">رفتن به مطلب</a><button class="btn sub small" data-act="editHighlight" data-id="${esc(h.id)}">یادداشت</button><button class="btn sub small" data-act="deleteHighlight" data-id="${esc(h.id)}" style="color:var(--bad)">حذف</button></div></article>`).join('') : '<div class="card"><p class="muted">هنوز هایلایتی ذخیره نشده است.</p></div>'}`);
+}
+ACT.editHighlight = (b) => { const h = (S.highlights || []).find((x) => x.id === b.dataset.id); if (!h) return; const note = prompt('یادداشت:', h.note || ''); if (note === null) return; h.note = note.trim().slice(0, 1000); save(); vHighlights(); };
+ACT.deleteHighlight = (b) => { if (!confirm('این هایلایت حذف شود؟')) return; S.highlights = (S.highlights || []).filter((x) => x.id !== b.dataset.id); save(); vHighlights(); };
+
+/* ================= TRUE BEGINNER COURSE ================= */
+const beginnerLessons = () => window.BEGINNER_LESSONS || [];
+function nextBeginnerLesson() { return beginnerLessons().find((lesson) => !S.lessonProgress?.[lesson.id]?.done) || null; }
+function vLesson(id) {
+  const lesson = beginnerLessons().find((x) => x.id === id) || nextBeginnerLesson();
+  if (!lesson) return render('<div class="card"><h2>درس‌های مقدماتی کامل شده‌اند.</h2><a class="btn" href="#path">ادامه مسیر</a></div>');
+  const progress = S.lessonProgress?.[lesson.id] || {};
+  render(`<a class="back" href="#path">→ مسیر یادگیری</a><div class="spread"><h1>${esc(lesson.title)}</h1><span class="pill en">${lesson.level} · ${fa(lesson.minutes)} دقیقه</span></div>
+    <div class="card accent"><h3>هدف امروز</h3><p>${esc(lesson.goal)}</p></div>
+    <div class="card"><h3>۱. پنج واژه و عبارت</h3>${lesson.words.map(([de,faText]) => `<div class="sent spread"><span><b class="en">${esc(de)}</b><br><span class="muted">${esc(faText)}</span></span><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.75">▶ بشنو</button></div>`).join('')}</div>
+    <div class="card"><h3>۲. نکتهٔ خیلی ساده</h3><p>${esc(lesson.explain)}</p></div>
+    <div class="card"><h3>۳. مثال‌ها</h3>${lesson.examples.map(([de,faText]) => `<div class="sent"><div class="spread"><b class="en">${esc(de)}</b><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.78">▶</button></div><span class="muted">${esc(faText)}</span></div>`).join('')}</div>
+    <div class="card soft"><h3>۴. حالا خودت بگو</h3><p>${esc(lesson.task)}</p></div>
+    <div class="card"><h3>۵. بررسی سریع</h3><p>${esc(lesson.quiz.q)}</p>${lesson.quiz.o.map((option,index) => `<button class="opt" data-act="lessonAnswer" data-id="${lesson.id}" data-k="${index}">${esc(option)}</button>`).join('')}<div id="lessonFeedback">${progress.done ? '<p class="explain">✓ این درس کامل شده است.</p>' : ''}</div></div>`);
+}
+ACT.lessonAnswer = (b) => {
+  const lesson = beginnerLessons().find((x) => x.id === b.dataset.id); if (!lesson) return;
+  const correct = Number(b.dataset.k) === lesson.quiz.a;
+  S.lessonProgress = S.lessonProgress || {}; const old = S.lessonProgress[lesson.id] || { attempts: 0 };
+  S.lessonProgress[lesson.id] = { attempts: old.attempts + 1, done: correct || old.done, at: new Date().toISOString() };
+  document.querySelectorAll('[data-act=lessonAnswer]').forEach((x) => { x.disabled = true; if (Number(x.dataset.k) === lesson.quiz.a) x.classList.add('right'); });
+  if (!correct) b.classList.add('wrong');
+  $('#lessonFeedback').innerHTML = correct ? `<p class="explain">✓ عالی! درس ثبت شد.</p><a class="btn" href="#lesson/${nextBeginnerLesson()?.id || ''}">درس بعدی</a>` : '<p class="explain">این بار درست نبود. پاسخ سبز را بلند بخوان و فردا دوباره مرور کن.</p>';
+  if (correct) markDone('lesson-' + lesson.id, lesson.minutes); else save();
+};
+
 /* ================= TODAY ================= */
 function vToday() {
   const k = todayKey();
@@ -211,7 +295,7 @@ function vToday() {
   const total = plan.reduce((a, t) => a + t.m, 0);
   const ph = phase();
   render(`
-    ${!S.diag ? `<div class="card accent"><h2>قدم اول: آزمون تعیین سطح</h2><p>${fa(D.diag.length)} سؤال از A1 تا C1، سپس یک متن و یک ضبط گفتار. اگر از صفر شروع می‌کنی، «نمی‌دانم» انتخاب کن.</p><a class="btn" href="#diag">شروع آزمون</a></div>` : ''}
+    ${nextBeginnerLesson() ? `<div class="card accent"><h2>شروع از صفر: ${esc(nextBeginnerLesson().title)}</h2><p>${esc(nextBeginnerLesson().goal)} هیچ دانش قبلی لازم نیست.</p><a class="btn" href="#lesson/${nextBeginnerLesson().id}">شروع درس</a><a class="btn sub" href="#diag" style="margin-right:8px">از قبل آلمانی بلدم: تعیین سطح</a></div>` : (!S.diag ? `<div class="card soft"><h2>تعیین سطح اختیاری</h2><p>دورهٔ مقدماتی کامل شده؛ اگر قبلاً آلمانی خوانده‌ای می‌توانی سطح خودت را بسنجی.</p><a class="btn sub" href="#diag">آزمون تعیین سطح</a></div>` : '')}
     <div class="card">
       <div class="spread"><h2>برنامهٔ امروز</h2><span class="pill">${fa(done)}/${fa(plan.length)} | حدود ${fa(total)} دقیقه</span></div>
       <div>${plan.map((t) => `
@@ -225,9 +309,8 @@ function vToday() {
       <p class="muted">${ph.focus}</p>
     </div>
     <div class="card">
-      <h3>ورودی شنیداری (بیرون از زمان اپ)</h3>
-      <p class="muted">در رفت‌وآمد یا ورزش. شنیدن زیاد پایهٔ لهجه است، ولی به‌تنهایی کافی نیست.</p>
-      ${D.listen.map((l) => `<p><b class="en">${esc(l.t)}</b><br><span class="muted">${esc(l.n)}</span></p>`).join('')}
+      <h3>${nextBeginnerLesson() ? 'شنیدن امروز برای مبتدی' : 'ورودی شنیداری (بیرون از زمان اپ)'}</h3>
+      ${nextBeginnerLesson() ? `<p>فعلاً فقط جمله‌های درس «${esc(nextBeginnerLesson().title)}» را گوش کن و تکرار کن. خبر، پادکست طبیعی و متن سریع برای این مرحله مناسب نیست.</p><a class="btn sub" href="#lesson/${nextBeginnerLesson().id}">شنیدن با سرعت آهسته</a>` : `<p class="muted">در رفت‌وآمد یا ورزش. شنیدن زیاد پایهٔ لهجه است، ولی به‌تنهایی کافی نیست.</p>${D.listen.map((l) => `<p><b class="en">${esc(l.t)}</b><br><span class="muted">${esc(l.n)}</span></p>`).join('')}`}
     </div>`);
 }
 ACT.toggle = (b) => {
@@ -249,6 +332,7 @@ function vPath() {
   S.curriculum = Object.assign({ completed: {}, skillScores: {}, examAttempts: [] }, S.curriculum || {});
   const next = C.nextLesson(S.curriculum);
   const ready = C.b2ExamReadiness(S.curriculum);
+  const beginnerCards = beginnerLessons().map((lesson) => { const done = !!S.lessonProgress?.[lesson.id]?.done; return `<a class="tile" href="#lesson/${lesson.id}"><div class="spread"><b>${done ? '✓ ' : ''}${esc(lesson.title)}</b><span class="pill en">${lesson.level}</span></div><span>${esc(lesson.goal)} · ${fa(lesson.minutes)} دقیقه</span></a>`; }).join('');
   const levelCards = C.levels.map((level) => {
     const p = C.levelProgress(S.curriculum, level);
     const units = C.units.filter((u) => u.level === level);
@@ -258,6 +342,7 @@ function vPath() {
         <p>${esc(u.canDo)}</p><div class="row"><input type="number" min="0" max="100" inputmode="numeric" id="unit-${u.id}" placeholder="نمره ۰–۱۰۰" style="width:130px"><button class="btn small" data-act="unitScore" data-id="${u.id}">ثبت تلاش</button></div></details>`; }).join('')}</div>`;
   }).join('');
   render(`<h1>مسیر تسلط A0 تا C1</h1>
+    <div class="card"><div class="spread"><h2>شروع واقعی برای مبتدی</h2><span class="pill">${fa(Object.values(S.lessonProgress || {}).filter((x) => x.done).length)} از ${fa(beginnerLessons().length)}</span></div><p class="muted">هر درس فقط یک هدف، پنج واژه، یک نکته و یک تمرین کوتاه دارد.</p><div class="grid2">${beginnerCards}</div></div>
     <div class="card accent"><h2>${next ? 'درس پیشنهادی: ' + esc(next.title) : 'همه واحدهای مسیر ثبت‌شده کامل شده‌اند'}</h2>
       ${next ? `<p>${esc(next.canDo)}</p><span class="pill en">${next.level}</span>` : ''}</div>
     <div class="card"><div class="spread"><h2>آمادگی Goethe B2</h2><span class="pill ${ready.ready ? 'on' : ''}">${ready.ready ? 'آماده' : 'در حال پیشرفت'}</span></div>
@@ -282,6 +367,8 @@ ACT.addMock = () => {
 
 /* ================= SPEAKING ================= */
 function vSpeak(mode, arg) {
+  const starter = nextBeginnerLesson();
+  if (!mode && starter) return render(`<h1>گفتار مقدماتی</h1><div class="card accent"><h2>امروز فقط همین‌ها</h2><p>جمله‌های کوتاه درس «${esc(starter.title)}» را گوش کن و تکرار کن. هنوز لازم نیست چند دقیقه آزاد صحبت کنی.</p></div><div class="card">${starter.examples.map(([de,faText]) => `<div class="sent spread"><span><b class="en">${esc(de)}</b><br><span class="muted">${esc(faText)}</span></span><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.72">▶ گوش کن</button></div>`).join('')}<a class="btn" href="#lesson/${starter.id}">تمرین کامل درس</a></div><div class="card soft"><a href="#speak/archive">آرشیو ضبط‌های من</a></div>`);
   if (mode === 'p1') return speakSession({ mode: 'p1', item: D.part1[S.p1i % D.part1.length] });
   if (mode === 'p2') return speakSession({ mode: 'p2', item: arg ? D.cards.find((c) => c.id === arg) : D.cards[S.cardi % D.cards.length] });
   if (mode === 'p3') return speakSession({ mode: 'p3', item: D.cards.find((c) => c.id === arg) || D.cards[0] });
@@ -459,6 +546,8 @@ ACT.shareRec = async (b) => {
 /* ================= PRONUNCIATION ================= */
 let abRec = null; // last shadow recording {url, key}
 function vPron(sub, id) {
+  const starter = nextBeginnerLesson();
+  if (!sub && starter) return render(`<h1>تلفظ مقدماتی</h1><div class="card accent"><h2>${esc(starter.title)}</h2><p>فقط گوش کن و بعد از هر کلمه یک بار آهسته و یک بار طبیعی تکرار کن. در این مرحله لازم نیست لهجه‌ات کامل باشد.</p></div><div class="card">${starter.words.map(([de,faText]) => `<div class="sent spread"><span><b class="en">${esc(de)}</b><br><span class="muted">${esc(faText)}</span></span><span class="row"><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.6">آهسته</button><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.9">طبیعی</button></span></div>`).join('')}<button class="btn" data-act="pronDone">تمرین کردم</button></div>`);
   if (sub === 'shadow' && id) return vShadowSet(id);
   if (sub === 'shadow') {
     const all = D.shadow;
@@ -683,6 +772,8 @@ function gramSession(cat) {
 
 /* ================= WRITING ================= */
 function vWrite(sub, id) {
+  const starter = nextBeginnerLesson();
+  if (!sub && starter) return render(`<h1>نوشتن مقدماتی</h1><div class="card accent"><h2>${esc(starter.title)}</h2><p>در سطح صفر، یک جملهٔ درست و کوتاه بهتر از یک متن بلند است.</p></div><div class="card"><h3>الگو را بخوان</h3><p class="en">${esc(starter.examples[0][0])}</p><p class="muted">${esc(starter.examples[0][1])}</p><h3>حالا یک جملهٔ مشابه بنویس</h3><textarea class="short" id="beginnerText" placeholder="یک جملهٔ کوتاه آلمانی…">${esc(S.beginnerWriting?.[starter.id] || '')}</textarea><button class="btn" data-act="saveBeginnerWriting" data-id="${starter.id}">ذخیره در حساب من</button></div>`);
   if (sub === 'e') return writeEditor(id);
   if (sub === 'v') return viewEssay(id);
   const drafts = Object.keys(S.drafts).filter((k) => S.drafts[k] && S.drafts[k].text);
@@ -694,6 +785,7 @@ function vWrite(sub, id) {
       ${group(k).map((w) => { const doneN = S.essays.filter((e) => e.pid === w.id).length; return `<a class="sent" style="display:block;color:inherit;text-decoration:none" href="#write/e/${w.id}"><span class="en">${esc(w.t)}</span>${doneN ? ` <span class="pill">✓ ${fa(doneN)}</span>` : ''}</a>`; }).join('')}</div>`).join('')}
     <div class="card"><h3>نوشته‌های ثبت‌شده (${fa(S.essays.length)})</h3>${S.essays.slice().reverse().map((e) => `<a class="sent" style="display:block;color:inherit;text-decoration:none" href="#write/v/${e.id}"><div class="spread"><span class="en">${esc((D.writing.find((w) => w.id === e.pid) || { t: '' }).t.slice(0, 60))}…</span><span class="muted">${e.date} | ${fa(e.words)} کلمه</span></div></a>`).join('') || '<p class="muted">—</p>'}</div>`);
 }
+ACT.saveBeginnerWriting = (b) => { const text = ($('#beginnerText') || {}).value?.trim(); if (!text) return toast('یک جمله بنویس'); S.beginnerWriting = S.beginnerWriting || {}; S.beginnerWriting[b.dataset.id] = text.slice(0, 1000); save(); toast('جمله ذخیره شد'); };
 const wordCount = (t) => (t.trim().match(/\S+/g) || []).length;
 function coachText(w, text, minutes) {
   const kind = D.writeKinds[w.k];
@@ -891,27 +983,15 @@ ACT.export = async () => {
 /* ================= SETTINGS ================= */
 function vSettings() {
   loadVoices();
-  const syncUrl = window.SyncClient ? SyncClient.configuredUrl() : '';
   const loggedIn = window.SyncClient && SyncClient.isLoggedIn();
+  const user = loggedIn ? SyncClient.currentUser() : null;
   render(`<h1>تنظیمات</h1>
-    <div class="card"><div class="spread"><h3>زبان‌آموزان</h3><span class="pill">${fa(PROFILES.items.length)} از ۵</span></div>
-      <select id="profile" style="width:100%">${PROFILES.items.map((p) => `<option value="${p.id}" ${p.id === PROFILES.active ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
-      <div class="row" style="margin-top:10px"><input id="profileName" type="text" maxlength="30" placeholder="نام زبان‌آموز"><button class="btn small" data-act="addProfile">افزودن</button><button class="btn sub small" data-act="renameProfile">تغییر نام</button></div>
-      <p class="muted">پیشرفت، کارت‌ها و نوشته‌های هر نفر جدا ذخیره می‌شود. سقف این نسخه پنج نفر است.</p></div>
-    <div class="card accent"><div class="spread"><h3>حساب و همگام‌سازی امن</h3><span class="pill">${loggedIn ? 'وارد شده' : (syncUrl ? 'سرور تنظیم شده' : 'آفلاین')}</span></div>
-      <p class="muted">اپ بدون حساب هم کار می‌کند. برای استفاده روی چند دستگاه، نشانی Worker را تنظیم و وارد حساب خود شو. همگام‌سازی عمداً دستی است تا هیچ داده‌ای ناخواسته جایگزین نشود.</p>
-      <label>نشانی API</label><input id="apiUrl" type="url" dir="ltr" autocomplete="url" placeholder="https://lili-german-backend.example.workers.dev" value="${esc(syncUrl)}" style="width:100%">
-      <div class="row" style="margin-top:10px"><button class="btn sub small" data-act="syncConfigure">ذخیره نشانی</button><button class="btn sub small" data-act="syncStatus">بررسی اتصال</button></div>
-      <details style="margin-top:12px" ${loggedIn ? '' : 'open'}><summary>ورود یا ثبت‌نام</summary>
-        <div class="grid2" style="margin-top:10px"><input id="syncUser" dir="ltr" autocomplete="username" placeholder="نام کاربری"><input id="syncPass" type="password" dir="ltr" autocomplete="current-password" minlength="12" placeholder="رمز عبور (حداقل ۱۲ نویسه)"></div>
-        <div class="row" style="margin-top:10px"><button class="btn small" data-act="syncLogin">ورود</button><input id="inviteCode" dir="ltr" autocomplete="one-time-code" placeholder="کد دعوت"><button class="btn sub small" data-act="syncRegister">ثبت‌نام با دعوت</button></div>
-      </details>
-      <details style="margin-top:12px"><summary>راه‌اندازی مدیر و دعوت کاربر</summary>
-        <p class="muted">فقط برای اولین حساب: توکن bootstrap را همراه نام کاربری و رمز بالا وارد کن. پس از ورود مدیر، کد دعوت یک‌بارمصرف بساز.</p>
-        <div class="row"><input id="bootstrapToken" type="password" dir="ltr" autocomplete="off" placeholder="توکن bootstrap"><button class="btn sub small" data-act="syncBootstrap">ساخت مدیر اول</button><button class="btn sub small" data-act="syncInvite">ساخت کد دعوت</button></div>
-        <p id="inviteOut" class="muted"></p>
-      </details>
-      <div class="row" style="margin-top:12px"><button class="btn small" data-act="syncPush" ${loggedIn ? '' : 'disabled'}>ارسال این پروفایل به سرور</button><button class="btn sub small" data-act="syncPull" ${loggedIn ? '' : 'disabled'}>دریافت از سرور</button><button class="btn sub small" data-act="syncLogout" ${loggedIn ? '' : 'disabled'}>خروج</button></div>
+    <div class="card accent"><div class="spread"><h3>حساب Supabase</h3><span class="pill">${loggedIn ? 'متصل' : 'مهمان'}</span></div>
+      ${loggedIn ? `<p>واردشده با <b class="en">${esc(user?.email || '')}</b></p><p class="muted">پیشرفت، فلش‌کارت‌ها، نوشته‌ها و هایلایت‌ها به‌صورت خودکار در حساب شما ذخیره می‌شوند.</p><div class="row"><button class="btn sub small" data-act="syncPull">دریافت آخرین نسخه</button><button class="btn sub small" data-act="syncLogout">خروج از حساب</button></div>` : `
+      <p class="muted">هرکس می‌تواند حساب خودش را بسازد. داده‌های هر حساب با Row Level Security کاملاً جداست.</p>
+      <div class="grid2"><input id="authName" type="text" maxlength="80" autocomplete="name" placeholder="نام نمایشی"><input id="authEmail" type="email" dir="ltr" autocomplete="email" placeholder="ایمیل"></div>
+      <input id="authPass" type="password" dir="ltr" autocomplete="current-password" minlength="8" placeholder="رمز عبور (حداقل ۸ نویسه)" style="width:100%;margin-top:10px">
+      <div class="row" style="margin-top:10px"><button class="btn small" data-act="syncLogin">ورود</button><button class="btn sub small" data-act="syncRegister">ساخت حساب رایگان</button></div>`}
       <p id="syncOut" class="muted"></p>
     </div>
     <div class="card"><h3>صدای مدل (آلمانی)</h3>
@@ -924,7 +1004,6 @@ function vSettings() {
     <div class="card"><h3>ماندگاری داده</h3><p class="muted">روی iPhone حتماً اپ را از Safari با «Add to Home Screen» نصب کن. داده‌های وب‌سایت‌های معمولی ممکن است بعد از مدتی استفاده نکردن پاک شوند.</p><button class="btn sub" data-act="persist">درخواست ذخیره‌سازی دائمی</button></div>
     <div class="card"><button class="btn sub" data-act="reset" style="color:var(--bad)">پاک کردن همهٔ داده‌ها</button></div>`);
   $('#theme').value = S.settings.theme;
-  $('#profile').onchange = async (e) => { PROFILES.active = e.target.value; profileStore.write(PROFILES); S = DEFAULT(); await load(); applyTheme(); route(); };
   $('#voice').onchange = (e) => { S.settings.voice = e.target.value; save(); };
   $('#rate').onchange = (e) => { S.settings.rate = Math.min(1.2, Math.max(0.5, Number(e.target.value) || 0.95)); save(); };
   $('#npd').onchange = (e) => { S.settings.newPerDay = Math.max(0, Math.min(30, Number(e.target.value) || 0)); save(); };
@@ -932,37 +1011,23 @@ function vSettings() {
   $('#theme').onchange = (e) => { S.settings.theme = e.target.value; applyTheme(); save(); };
 }
 const syncMessage = (error) => ({
-  api_not_configured: 'ابتدا نشانی API را ذخیره کن.', https_required: 'نشانی API باید HTTPS باشد.',
-  invalid_credentials: 'نام کاربری یا رمز معتبر نیست.', invalid_registration: 'اطلاعات ثبت‌نام کامل نیست.',
-  invalid_invite: 'کد دعوت نامعتبر یا منقضی است.', username_unavailable: 'این نام کاربری قبلاً استفاده شده است.',
-  user_limit_reached: 'سقف پنج کاربر پر شده است.', forbidden: 'دسترسی مجاز نیست.', unauthorized: 'نشست منقضی شده؛ دوباره وارد شو.',
-  already_bootstrapped: 'مدیر قبلاً ساخته شده است.', version_conflict: 'نسخهٔ سرور جدیدتر است؛ ابتدا دریافت کن و سپس تصمیم بگیر.'
-}[error && error.message] || ('خطای اتصال: ' + (error && error.message ? error.message : 'نامشخص')));
-const syncCredentials = () => ({ username: ($('#syncUser') || {}).value?.trim(), password: ($('#syncPass') || {}).value || '' });
-ACT.syncConfigure = () => { try { SyncClient.configure(($('#apiUrl') || {}).value); toast('نشانی سرور ذخیره شد'); route(); } catch (e) { toast(syncMessage(e)); } };
-ACT.syncStatus = async () => { try { const data = await SyncClient.me(); $('#syncOut').textContent = `متصل: ${data.user.username} (${data.user.role})`; } catch (e) { $('#syncOut').textContent = syncMessage(e); } };
-ACT.syncLogin = async () => { try { const c = syncCredentials(); await SyncClient.login(c.username, c.password); toast('ورود موفق'); route(); } catch (e) { toast(syncMessage(e)); } };
-ACT.syncRegister = async () => { try { const c = syncCredentials(); await SyncClient.register(c.username, c.password, ($('#inviteCode') || {}).value?.trim()); toast('حساب ساخته شد'); route(); } catch (e) { toast(syncMessage(e)); } };
-ACT.syncBootstrap = async () => { try { const c = syncCredentials(); await SyncClient.bootstrap(c.username, c.password, ($('#bootstrapToken') || {}).value || ''); toast('مدیر ساخته شد'); route(); } catch (e) { toast(syncMessage(e)); } };
-ACT.syncInvite = async () => { try { const data = await SyncClient.createInvite(); $('#inviteOut').textContent = `کد دعوت: ${data.inviteCode} — تا ۲۴ ساعت معتبر و فقط یک‌بار قابل استفاده`; } catch (e) { toast(syncMessage(e)); } };
-ACT.syncPush = async () => { try { await SyncClient.push(S); toast('پروفایل روی سرور ذخیره شد'); } catch (e) { toast(syncMessage(e)); } };
+  invalid_credentials: 'ایمیل یا رمز عبور درست نیست.', email_not_confirmed: 'ابتدا لینک تأیید ایمیل را باز کن.',
+  user_already_exists: 'این ایمیل قبلاً ثبت شده است.', auth_required: 'دوباره وارد حساب شو.',
+  state_missing: 'فضای ذخیره‌سازی حساب آماده نشده است.', version_conflict: 'دادهٔ جدیدتری روی دستگاه دیگر وجود دارد؛ آخرین نسخه را دریافت کن.'
+}[error?.code || error?.message] || ('خطا: ' + (error?.message || 'نامشخص')));
+const authFields = () => ({ email: ($('#authEmail') || {}).value?.trim(), password: ($('#authPass') || {}).value || '', name: ($('#authName') || {}).value?.trim() });
+async function adoptRemoteState() {
+  const local = JSON.parse(JSON.stringify(S)); const remote = await SyncClient.pull();
+  if (!Object.keys(remote.state || {}).length) { await SyncClient.push(local); return; }
+  applyingRemote = true; S = Object.assign(DEFAULT(), remote.state); S.settings = Object.assign(DEFAULT().settings, S.settings || {}); await DB.set(stateKey(), S); applyingRemote = false;
+}
+ACT.syncLogin = async () => { try { const c = authFields(); await SyncClient.login(c.email, c.password); await adoptRemoteState(); toast('ورود و همگام‌سازی انجام شد'); route(); } catch (e) { toast(syncMessage(e)); } };
+ACT.syncRegister = async () => { try { const c = authFields(); if (!c.name || !c.email || c.password.length < 8) return toast('نام، ایمیل و رمز حداقل ۸ نویسه لازم است'); const data = await SyncClient.signUp(c.email, c.password, c.name); if (data?.access_token) { await adoptRemoteState(); toast('حساب ساخته و متصل شد'); route(); } else { $('#syncOut').textContent = 'حساب ساخته شد؛ لینک تأیید ارسال‌شده به ایمیل را باز کن و سپس وارد شو.'; } } catch (e) { toast(syncMessage(e)); } };
 ACT.syncPull = async () => {
-  if (!confirm('دادهٔ این پروفایل با نسخهٔ سرور جایگزین شود؟ ابتدا از بخش پیشرفت خروجی بگیر.')) return;
-  try { const data = await SyncClient.pull(); S = Object.assign(DEFAULT(), data.state || {}); S.settings = Object.assign(DEFAULT().settings, S.settings || {}); await DB.set(stateKey(), S); toast('نسخهٔ سرور دریافت شد'); route(); } catch (e) { toast(syncMessage(e)); }
+  if (!confirm('آخرین نسخهٔ حساب جایگزین دادهٔ محلی شود؟')) return;
+  try { await adoptRemoteState(); toast('آخرین نسخه دریافت شد'); route(); } catch (e) { toast(syncMessage(e)); }
 };
-ACT.syncLogout = async () => { try { await SyncClient.logout(); toast('از حساب خارج شدی'); route(); } catch (e) { toast(syncMessage(e)); } };
-ACT.addProfile = async () => {
-  const name = ($('#profileName') || {}).value?.trim();
-  if (!name) return toast('نام را وارد کن');
-  if (PROFILES.items.length >= 5) return toast('حداکثر پنج زبان‌آموز مجاز است');
-  const id = 'p' + Date.now().toString(36);
-  PROFILES.items.push({ id, name }); PROFILES.active = id; profileStore.write(PROFILES);
-  S = DEFAULT(); await DB.set(stateKey(), S); route();
-};
-ACT.renameProfile = () => {
-  const name = ($('#profileName') || {}).value?.trim(); if (!name) return toast('نام جدید را وارد کن');
-  activeProfile().name = name; profileStore.write(PROFILES); route();
-};
+ACT.syncLogout = async () => { try { await SyncClient.logout(); applyingRemote = true; S = DEFAULT(); await DB.set(stateKey(), S); applyingRemote = false; toast('از حساب خارج شدی'); route(); } catch (e) { toast(syncMessage(e)); } };
 ACT.persist = async () => {
   if (navigator.storage && navigator.storage.persist) { const ok = await navigator.storage.persist(); toast(ok ? 'ذخیره‌سازی دائمی فعال شد' : 'مرورگر قبول نکرد. نصب روی Home Screen کافی است'); }
   else toast('این مرورگر پشتیبانی نمی‌کند');
@@ -976,7 +1041,11 @@ ACT.reset = async () => {
 
 /* ---------------- boot ---------------- */
 (async () => {
+  if (window.SyncClient) { try { await SyncClient.captureAuthCallback(); } catch (_) { /* login form remains available */ } }
   await load();
+  if (window.SyncClient?.isLoggedIn()) {
+    try { await adoptRemoteState(); } catch (error) { if ([400, 401, 403].includes(error.status)) await SyncClient.logout(); }
+  }
   applyTheme();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   window.addEventListener('hashchange', route);

@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>استودیو آلمانی لی‌لی</title>
-<meta name="description" content="مسیر خودآموز آلمانی از صفر تا C1 برای حداکثر پنج زبان‌آموز، همراه با تمرین روزانه، تلفظ، گرامر، نوشتن و مرور فاصله‌دار.">
-<meta name="theme-color" content="#1d4e6b" media="(prefers-color-scheme: light)">
+<meta name="description" content="مسیر شخصی آموزش آلمانی از صفر تا C1 با حساب مستقل، تمرین روزانه، تلفظ، گرامر، نوشتن، هایلایت و مرور فاصله‌دار.">
+<meta name="theme-color" content="#171717" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1519" media="(prefers-color-scheme: dark)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -58,9 +58,9 @@ button,input,select,textarea{font:inherit; color:inherit}
 
 .topbar{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 0 10px}
 .brand{display:flex; align-items:center; gap:10px; text-decoration:none; color:inherit}
-.brand-mark{width:36px; height:36px; border-radius:10px; background:var(--brand); color:var(--brand-ink); display:grid; place-items:center; font-family:'Inter'; font-weight:700; font-size:15px}
+.brand-mark{width:40px; height:40px; border-radius:10px; object-fit:cover; box-shadow:0 1px 5px var(--shadow)}
 .brand small{display:block; color:var(--muted); font-size:.78rem; line-height:1.2}
-.top-actions{display:flex; gap:6px}
+.top-actions{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end}
 .icon-btn{border:1px solid var(--border); background:var(--surface); border-radius:10px; padding:6px 10px; font-size:.85rem; cursor:pointer; text-decoration:none; color:inherit}
 
 .card{background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:16px; margin:0 0 12px; box-shadow:0 1px 6px var(--shadow)}
@@ -124,7 +124,7 @@ button,input,select,textarea{font:inherit; color:inherit}
 
 textarea{width:100%; min-height:260px; border:1px solid var(--border); border-radius:12px; padding:12px; background:var(--surface); direction:ltr; text-align:left; font-family:'Inter'; line-height:1.6; font-size:16px}
 textarea.short{min-height:90px}
-input[type=text],input[type=number],input[type=date],select{border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface); min-height:40px; font-size:16px}
+input[type=text],input[type=email],input[type=password],input[type=url],input[type=number],input[type=date],select{border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface); min-height:40px; font-size:16px}
 label.chkrow{display:flex; gap:10px; align-items:flex-start; padding:6px 0}
 label.chkrow input{margin-top:6px; width:18px; height:18px}
 
@@ -143,6 +143,10 @@ label.chkrow input{margin-top:6px; width:18px; height:18px}
 
 .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(90px + env(safe-area-inset-bottom,0)); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:12px; font-size:.9rem; z-index:20; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw}
 .toast.show{opacity:1}
+.highlight-fab{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(94px + env(safe-area-inset-bottom,0)); z-index:18; display:none; box-shadow:0 5px 20px var(--shadow)}
+.highlight-fab.show{display:inline-flex}
+mark.user-highlight{background:#ffe66d; color:#172026; border-radius:3px; padding:0 2px}
+.highlight-quote{border-right:4px solid #f0bd24; padding-right:12px; direction:auto}
 audio{width:100%; margin-top:8px}
 details summary{cursor:pointer; font-weight:600}
 .back{display:inline-block; margin-bottom:10px; text-decoration:none; font-size:.9rem}
@@ -152,9 +156,10 @@ pre.copybox{white-space:pre-wrap; direction:ltr; text-align:left; font-family:'I
 <body>
 <div class="shell">
   <header class="topbar">
-    <a class="brand" href="#today"><span class="brand-mark">De</span><span><b>استودیو آلمانی لی‌لی</b><small id="daybadge"></small></span></a>
+    <a class="brand" href="#today"><img class="brand-mark" src="icons/favicon-64.png" width="40" height="40" alt="نشان لی‌لی"><span><b>استودیو آلمانی لی‌لی</b><small id="daybadge"></small></span></a>
     <div class="top-actions">
       <a class="icon-btn" href="#path">مسیر یادگیری</a>
+      <a class="icon-btn" href="#highlights">هایلایت‌ها</a>
       <a class="icon-btn" href="#progress">پیشرفت</a>
       <a class="icon-btn" href="#settings">تنظیمات</a>
     </div>
@@ -169,9 +174,12 @@ pre.copybox{white-space:pre-wrap; direction:ltr; text-align:left; font-family:'I
   <a href="#write" data-r="write"><b>✎</b>نوشتار</a>
 </nav>
 <div class="toast" id="toast"></div>
+<button class="btn highlight-fab" id="highlightBtn" data-act="addHighlight">ذخیره هایلایت</button>
 <script src="data.js"></script>
 <script src="curriculum.js"></script>
 <script src="learning-engine.js"></script>
+<script src="beginner-content.js"></script>
+<script src="supabase-config.js"></script>
 <script src="sync-client.js"></script>
 <script src="app.js"></script>
 <script>

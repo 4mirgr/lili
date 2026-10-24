@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lili-deutsch-v6';
+const CACHE_NAME = 'lili-deutsch-v8';
 const APP_SHELL = [
   './',
   './index.html',
@@ -6,6 +6,8 @@ const APP_SHELL = [
   './data.js',
   './curriculum.js',
   './learning-engine.js',
+  './beginner-content.js',
+  './supabase-config.js',
   './sync-client.js',
   './manifest.json',
   './icons/icon-192.png',

@@ -1,14 +1,14 @@
 {
   "name": "استودیو آلمانی لی‌لی",
   "short_name": "Lili Deutsch",
-  "description": "مسیر آلمانی از صفر تا C1 برای حداکثر پنج زبان‌آموز",
+  "description": "مسیر آلمانی از صفر تا C1 با هدف قبولی مطمئن Goethe B2",
   "start_url": "./index.html",
   "scope": "./",
   "id": "./index.html",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#f3f5f4",
-  "theme_color": "#1d4e6b",
+  "theme_color": "#171717",
   "dir": "rtl",
   "lang": "fa",
   "icons": [
