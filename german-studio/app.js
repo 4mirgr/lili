@@ -44,7 +44,8 @@ const DEFAULT = () => ({
   v: 1, start: todayKey(),
   settings: { rate: 0.95, voice: '', newPerDay: 8, theme: 'auto' },
   done: {}, log: {}, srs: {}, userCards: [], gram: {}, pairs: {},
-  essays: [], drafts: {}, speaks: [], diag: null, p1i: 0, cardi: 0
+  essays: [], drafts: {}, writingCycles: {}, speaks: [], diag: null, p1i: 0, cardi: 0,
+  curriculum: { completed: {}, skillScores: {}, examAttempts: [] }
 });
 let S = DEFAULT();
 
@@ -185,7 +186,7 @@ function route() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const parts = (location.hash.slice(1) || 'today').split('/');
   const name = parts[0];
-  const views = { today: vToday, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI };
+  const views = { today: vToday, path: vPath, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI };
   (views[name] || vToday)(...parts.slice(1));
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === name));
   $('#daybadge').textContent = `${activeProfile().name} | روز ${fa(dayNum() - dayNum(S.start) + 1)} | ماه ${fa(monthNo())} از ۲۴`;
@@ -239,6 +240,44 @@ ACT.toggle = (b) => {
     save();
   } else markDone(key);
   vToday();
+};
+
+/* ================= MASTERY PATH ================= */
+function vPath() {
+  const C = window.CURRICULUM;
+  if (!C) return render('<div class="card">موتور مسیر آموزشی بارگذاری نشد.</div>');
+  S.curriculum = Object.assign({ completed: {}, skillScores: {}, examAttempts: [] }, S.curriculum || {});
+  const next = C.nextLesson(S.curriculum);
+  const ready = C.b2ExamReadiness(S.curriculum);
+  const levelCards = C.levels.map((level) => {
+    const p = C.levelProgress(S.curriculum, level);
+    const units = C.units.filter((u) => u.level === level);
+    return `<div class="card"><div class="spread"><h2 class="en">${level}</h2><span class="pill ${p.gatePassed ? 'on' : ''}">${fa(p.percent)}٪ ${p.gatePassed ? '· عبور' : ''}</span></div>
+      <p class="muted">${esc(C.levelDefinitions[level].canDo.join(' · '))}</p>
+      ${units.map((u) => { const r = S.curriculum.completed[u.id] || {}; return `<details class="sent"><summary>${esc(u.title)} ${r.score ? `· ${fa(r.score)}٪ / ${fa(r.attempts || 0)} تلاش` : ''}</summary>
+        <p>${esc(u.canDo)}</p><div class="row"><input type="number" min="0" max="100" inputmode="numeric" id="unit-${u.id}" placeholder="نمره ۰–۱۰۰" style="width:130px"><button class="btn small" data-act="unitScore" data-id="${u.id}">ثبت تلاش</button></div></details>`; }).join('')}</div>`;
+  }).join('');
+  render(`<h1>مسیر تسلط A0 تا C1</h1>
+    <div class="card accent"><h2>${next ? 'درس پیشنهادی: ' + esc(next.title) : 'همه واحدهای مسیر ثبت‌شده کامل شده‌اند'}</h2>
+      ${next ? `<p>${esc(next.canDo)}</p><span class="pill en">${next.level}</span>` : ''}</div>
+    <div class="card"><div class="spread"><h2>آمادگی Goethe B2</h2><span class="pill ${ready.ready ? 'on' : ''}">${ready.ready ? 'آماده' : 'در حال پیشرفت'}</span></div>
+      <p class="muted">نیازمند سه آزمون کامل متوالی با حداقل ۷۰ در هر ماژول و ارزیابی معتبر خروجی‌های گفتار/نوشتار است. این شاخص تضمین رسمی قبولی نیست.</p>
+      <div class="grid2">${['reading','listening','writing','speaking'].map((k) => `<label>${({reading:'خواندن',listening:'شنیدن',writing:'نوشتن',speaking:'گفتار'})[k]}<input type="number" min="0" max="100" id="mock-${k}" style="width:100%" placeholder="۰–۱۰۰"></label>`).join('')}</div>
+      <label class="chkrow"><input type="checkbox" id="mock-validated"> نوشتن و گفتار این آزمون با rubric توسط مربی/ارزیاب بررسی شده‌اند</label>
+      <button class="btn" data-act="addMock">ثبت آزمون کامل</button></div>
+    ${levelCards}`);
+}
+ACT.unitScore = (b) => {
+  const input = $('#unit-' + b.dataset.id); const score = Number(input.value);
+  if (!Number.isFinite(score) || score < 0 || score > 100) return toast('نمره معتبر ۰ تا ۱۰۰ وارد کن');
+  const old = S.curriculum.completed[b.dataset.id] || { attempts: 0 };
+  S.curriculum.completed[b.dataset.id] = { score, attempts: Number(old.attempts || 0) + 1, at: new Date().toISOString() };
+  save(); vPath();
+};
+ACT.addMock = () => {
+  const attempt = { at: new Date().toISOString(), validated: $('#mock-validated').checked };
+  for (const k of ['reading','listening','writing','speaking']) { const n = Number($('#mock-' + k).value); if (!Number.isFinite(n) || n < 0 || n > 100) return toast('هر چهار نمره آزمون را وارد کن'); attempt[k] = n; }
+  S.curriculum.examAttempts.push(attempt); S.curriculum.examAttempts = S.curriculum.examAttempts.slice(-12); save(); vPath();
 };
 
 /* ================= SPEAKING ================= */
@@ -330,6 +369,10 @@ function speakSession(sess) {
         <details><summary>متن پیاده‌شده (اختیاری، برای بازخورد مربی)</summary>
           <p class="muted">متن را از روی ضبط، کلمه‌به‌کلمه و با همهٔ خطاها بنویس، یا از transcript اپ Voice Memos استفاده کن. دیکتهٔ کیبورد iOS خطاهایت را خودکار درست می‌کند و به درد این کار نمی‌خورد.</p>
           <textarea class="short" id="trans" placeholder="Transcript…"></textarea></details>
+        <details><summary>rubric تمرینی Goethe/CEFR</summary>
+          <p class="muted">بعد از گوش‌دادن، هر معیار را از ۰ تا ۴ ارزیابی کن. «فهم‌پذیری» سنجیده می‌شود، نه حذف لهجه یا یک درصد ساختگی تلفظ.</p>
+          <div class="grid2">${Object.entries({taskFulfilment:'انجام کامل تکلیف',coherence:'انسجام',interaction:'تعامل',intelligibility:'فهم‌پذیری',range:'دامنه واژگان و ساختار',accuracy:'دقت',fluency:'روانی'}).map(([k, label]) => `<label>${label}<select id="sp-${k}" style="width:100%">${[0,1,2,3,4].map((n) => `<option value="${n}" ${n === 2 ? 'selected' : ''}>${fa(n)}</option>`).join('')}</select></label>`).join('')}</div>
+        </details>
         <div class="row" style="margin-top:10px"><button class="btn" data-act="sSave">ذخیره</button><button class="btn sub" data-act="sRetry">دوباره</button></div>
       </div>`;
   }
@@ -361,6 +404,10 @@ function speakSession(sess) {
       round: sess.mode === 'f432' ? sess.round : undefined, dur: Math.round(result.dur), checks,
       conf: Number($('#conf').value), trans: ($('#trans') || {}).value || ''
     };
+    if (window.LearningEngine) {
+      const scores = {}; for (const k of Object.keys(LearningEngine.SPEAKING_WEIGHTS)) scores[k] = Number($('#sp-' + k).value);
+      entry.assessment = LearningEngine.createSpeakingAttempt({ id, taskId: entry.itemId, at: entry.ts, durationSeconds: entry.dur, transcript: entry.trans, scores });
+    }
     try {
       const buf = await result.blob.arrayBuffer();
       await DB.putRec({ id, type: result.blob.type, buf });
@@ -388,7 +435,7 @@ async function playRec(id, holder) {
 function vArchive() {
   const list = S.speaks.slice().sort((a, b) => b.ts - a.ts);
   const bench = list.filter((s) => s.mode === 'bench');
-  const row = (s) => `<div class="sent"><div class="spread"><div><b class="en">${esc(s.title)}</b><div class="muted">${s.date} | ${s.mode}${s.round !== undefined ? ' | round ' + (s.round + 1) : ''} | ${mmss(s.dur)} | اعتمادبه‌نفس ${fa(s.conf)}/۵</div></div>
+  const row = (s) => `<div class="sent"><div class="spread"><div><b class="en">${esc(s.title)}</b><div class="muted">${s.date} | ${s.mode}${s.round !== undefined ? ' | round ' + (s.round + 1) : ''} | ${mmss(s.dur)} | اعتمادبه‌نفس ${fa(s.conf)}/۵${s.assessment ? ' | rubric ' + fa(s.assessment.overall) + '/۱۰۰' : ''}</div></div>
     <div class="row"><button class="btn small" data-act="play" data-id="${s.id}">▶</button><button class="btn sub small" data-act="shareRec" data-id="${s.id}">خروجی</button><button class="btn sub small" data-act="delRec" data-id="${s.id}">حذف</button></div></div><div id="p-${s.id}"></div></div>`;
   render(`<a class="back" href="#speak">→ گفتار</a><h1>آرشیو ضبط‌ها</h1>
     ${bench.length ? `<div class="card accent"><h3>Benchmark ماهانه (${fa(bench.length)})</h3><p class="muted">اولین و آخرین ضبط را پشت هم گوش کن. پیشرفت واقعی را این‌جا می‌شنوی، نه در عددها.</p>${bench.map(row).join('')}</div>` : ''}
@@ -698,6 +745,11 @@ function writeEditor(pid) {
     const text = ta.value.trim(); if (wordCount(text) < 40) return toast('متن خیلی کوتاه است');
     const e = { id: uid(), pid, date: todayKey(), text, words: wordCount(text), minutes: Math.round(dr.sec / 60) };
     S.essays.push(e); delete S.drafts[pid];
+    if (window.LearningEngine) {
+      let cycle = S.writingCycles[pid] || LearningEngine.createWritingCycle({ taskId: pid, targetLevel: 'B2' });
+      cycle = LearningEngine.addWritingDraft(cycle, { at: Date.now(), text });
+      S.writingCycles[pid] = cycle; e.version = cycle.drafts.length;
+    }
     markDone('write', Math.max(5, e.minutes));
     save(); location.hash = '#write/v/' + e.id;
   };
@@ -707,10 +759,20 @@ function viewEssay(id) {
   const e = S.essays.find((x) => x.id === id); if (!e) return vWrite();
   const w = D.writing.find((x) => x.id === e.pid);
   render(`<a class="back" href="#write">→ نوشتار</a>
-    <div class="card"><p class="muted">${e.date} | ${fa(e.words)} کلمه | ${fa(e.minutes)} دقیقه</p><div class="en prompt" style="font-size:.95rem"><i>${esc(w.t)}</i></div>
+    <div class="card"><p class="muted">${e.date} | ${fa(e.words)} کلمه | ${fa(e.minutes)} دقیقه ${e.version ? '| نسخه ' + fa(e.version) : ''}</p><div class="en prompt" style="font-size:.95rem"><i>${esc(w.t)}</i></div>
     <div class="en" style="white-space:pre-wrap;margin-top:12px">${esc(e.text)}</div></div>
+    <div class="card"><h3>ارزیابی Writing با rubric</h3><p class="muted">امتیازها را پس از بازخورد مربی یا ارزیاب وارد کن؛ سپس همان تمرین را بازنویسی کن تا نسخه‌ها قابل مقایسه باشند.</p>
+      <div class="grid2">${Object.entries({taskFulfilment:'انجام تکلیف',coherence:'انسجام',range:'دامنه واژگان و ساختار',accuracy:'دقت',register:'لحن و register'}).map(([k,label]) => `<label>${label}<select id="wr-${k}" style="width:100%">${[0,1,2,3,4].map((n) => `<option value="${n}" ${Number(e.assessment?.scores?.[k]) === n ? 'selected' : ''}>${fa(n)}</option>`).join('')}</select></label>`).join('')}</div>
+      <textarea class="short" id="wr-feedback" placeholder="بازخورد و برنامه بازنویسی…">${esc(e.assessment?.feedback || '')}</textarea>
+      <button class="btn" data-act="wAssess">ثبت ارزیابی</button> ${e.assessment ? `<span class="pill on">${fa(e.assessment.overall)}/۱۰۰</span>` : ''}</div>
     <div class="row"><button class="btn" data-act="eCopy">کپی برای مربی</button><button class="btn sub" data-act="eDel">حذف</button></div>`);
   ACT.eCopy = () => copyText(coachText(w, e.text, e.minutes));
+  ACT.wAssess = () => {
+    const scores = {}; for (const k of Object.keys(LearningEngine.WRITING_WEIGHTS)) scores[k] = Number($('#wr-' + k).value);
+    e.assessment = { scores, overall: LearningEngine.scoreRubric(scores, LearningEngine.WRITING_WEIGHTS), feedback: $('#wr-feedback').value.trim(), at: new Date().toISOString() };
+    const cycle = S.writingCycles[e.pid]; if (cycle && e.version && cycle.drafts[e.version - 1]) { cycle.drafts[e.version - 1].scores = scores; cycle.drafts[e.version - 1].overall = e.assessment.overall; cycle.drafts[e.version - 1].feedback = [e.assessment.feedback].filter(Boolean); }
+    save(); viewEssay(id);
+  };
   ACT.eDel = () => { if (confirm('حذف شود؟')) { S.essays = S.essays.filter((x) => x.id !== id); save(); location.hash = '#write'; } };
 }
 
@@ -836,11 +898,29 @@ ACT.export = async () => {
 /* ================= SETTINGS ================= */
 function vSettings() {
   loadVoices();
+  const syncUrl = window.SyncClient ? SyncClient.configuredUrl() : '';
+  const loggedIn = window.SyncClient && SyncClient.isLoggedIn();
   render(`<h1>تنظیمات</h1>
     <div class="card"><div class="spread"><h3>زبان‌آموزان</h3><span class="pill">${fa(PROFILES.items.length)} از ۵</span></div>
       <select id="profile" style="width:100%">${PROFILES.items.map((p) => `<option value="${p.id}" ${p.id === PROFILES.active ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
       <div class="row" style="margin-top:10px"><input id="profileName" type="text" maxlength="30" placeholder="نام زبان‌آموز"><button class="btn small" data-act="addProfile">افزودن</button><button class="btn sub small" data-act="renameProfile">تغییر نام</button></div>
       <p class="muted">پیشرفت، کارت‌ها و نوشته‌های هر نفر جدا ذخیره می‌شود. سقف این نسخه پنج نفر است.</p></div>
+    <div class="card accent"><div class="spread"><h3>حساب و همگام‌سازی امن</h3><span class="pill">${loggedIn ? 'وارد شده' : (syncUrl ? 'سرور تنظیم شده' : 'آفلاین')}</span></div>
+      <p class="muted">اپ بدون حساب هم کار می‌کند. برای استفاده روی چند دستگاه، نشانی Worker را تنظیم و وارد حساب خود شو. همگام‌سازی عمداً دستی است تا هیچ داده‌ای ناخواسته جایگزین نشود.</p>
+      <label>نشانی API</label><input id="apiUrl" type="url" dir="ltr" autocomplete="url" placeholder="https://lili-german-backend.example.workers.dev" value="${esc(syncUrl)}" style="width:100%">
+      <div class="row" style="margin-top:10px"><button class="btn sub small" data-act="syncConfigure">ذخیره نشانی</button><button class="btn sub small" data-act="syncStatus">بررسی اتصال</button></div>
+      <details style="margin-top:12px" ${loggedIn ? '' : 'open'}><summary>ورود یا ثبت‌نام</summary>
+        <div class="grid2" style="margin-top:10px"><input id="syncUser" dir="ltr" autocomplete="username" placeholder="نام کاربری"><input id="syncPass" type="password" dir="ltr" autocomplete="current-password" minlength="12" placeholder="رمز عبور (حداقل ۱۲ نویسه)"></div>
+        <div class="row" style="margin-top:10px"><button class="btn small" data-act="syncLogin">ورود</button><input id="inviteCode" dir="ltr" autocomplete="one-time-code" placeholder="کد دعوت"><button class="btn sub small" data-act="syncRegister">ثبت‌نام با دعوت</button></div>
+      </details>
+      <details style="margin-top:12px"><summary>راه‌اندازی مدیر و دعوت کاربر</summary>
+        <p class="muted">فقط برای اولین حساب: توکن bootstrap را همراه نام کاربری و رمز بالا وارد کن. پس از ورود مدیر، کد دعوت یک‌بارمصرف بساز.</p>
+        <div class="row"><input id="bootstrapToken" type="password" dir="ltr" autocomplete="off" placeholder="توکن bootstrap"><button class="btn sub small" data-act="syncBootstrap">ساخت مدیر اول</button><button class="btn sub small" data-act="syncInvite">ساخت کد دعوت</button></div>
+        <p id="inviteOut" class="muted"></p>
+      </details>
+      <div class="row" style="margin-top:12px"><button class="btn small" data-act="syncPush" ${loggedIn ? '' : 'disabled'}>ارسال این پروفایل به سرور</button><button class="btn sub small" data-act="syncPull" ${loggedIn ? '' : 'disabled'}>دریافت از سرور</button><button class="btn sub small" data-act="syncLogout" ${loggedIn ? '' : 'disabled'}>خروج</button></div>
+      <p id="syncOut" class="muted"></p>
+    </div>
     <div class="card"><h3>صدای مدل (آلمانی)</h3>
       <select id="voice" style="width:100%"><option value="">پیش‌فرض</option>${voices.map((v) => `<option value="${esc(v.voiceURI)}" ${v.voiceURI === S.settings.voice ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>
       <p class="muted">در iPhone می‌توانی صدای بهتر آلمانی را از Settings → Accessibility → Spoken Content → Voices → German دانلود کنی. ${voices.length ? '' : 'هنوز صدای آلمانی پیدا نشد.'}</p>
@@ -858,6 +938,26 @@ function vSettings() {
   $('#start').onchange = (e) => { if (e.target.value) { S.start = e.target.value; save(); } };
   $('#theme').onchange = (e) => { S.settings.theme = e.target.value; applyTheme(); save(); };
 }
+const syncMessage = (error) => ({
+  api_not_configured: 'ابتدا نشانی API را ذخیره کن.', https_required: 'نشانی API باید HTTPS باشد.',
+  invalid_credentials: 'نام کاربری یا رمز معتبر نیست.', invalid_registration: 'اطلاعات ثبت‌نام کامل نیست.',
+  invalid_invite: 'کد دعوت نامعتبر یا منقضی است.', username_unavailable: 'این نام کاربری قبلاً استفاده شده است.',
+  user_limit_reached: 'سقف پنج کاربر پر شده است.', forbidden: 'دسترسی مجاز نیست.', unauthorized: 'نشست منقضی شده؛ دوباره وارد شو.',
+  already_bootstrapped: 'مدیر قبلاً ساخته شده است.', version_conflict: 'نسخهٔ سرور جدیدتر است؛ ابتدا دریافت کن و سپس تصمیم بگیر.'
+}[error && error.message] || ('خطای اتصال: ' + (error && error.message ? error.message : 'نامشخص')));
+const syncCredentials = () => ({ username: ($('#syncUser') || {}).value?.trim(), password: ($('#syncPass') || {}).value || '' });
+ACT.syncConfigure = () => { try { SyncClient.configure(($('#apiUrl') || {}).value); toast('نشانی سرور ذخیره شد'); route(); } catch (e) { toast(syncMessage(e)); } };
+ACT.syncStatus = async () => { try { const data = await SyncClient.me(); $('#syncOut').textContent = `متصل: ${data.user.username} (${data.user.role})`; } catch (e) { $('#syncOut').textContent = syncMessage(e); } };
+ACT.syncLogin = async () => { try { const c = syncCredentials(); await SyncClient.login(c.username, c.password); toast('ورود موفق'); route(); } catch (e) { toast(syncMessage(e)); } };
+ACT.syncRegister = async () => { try { const c = syncCredentials(); await SyncClient.register(c.username, c.password, ($('#inviteCode') || {}).value?.trim()); toast('حساب ساخته شد'); route(); } catch (e) { toast(syncMessage(e)); } };
+ACT.syncBootstrap = async () => { try { const c = syncCredentials(); await SyncClient.bootstrap(c.username, c.password, ($('#bootstrapToken') || {}).value || ''); toast('مدیر ساخته شد'); route(); } catch (e) { toast(syncMessage(e)); } };
+ACT.syncInvite = async () => { try { const data = await SyncClient.createInvite(); $('#inviteOut').textContent = `کد دعوت: ${data.inviteCode} — تا ۲۴ ساعت معتبر و فقط یک‌بار قابل استفاده`; } catch (e) { toast(syncMessage(e)); } };
+ACT.syncPush = async () => { try { await SyncClient.push(S); toast('پروفایل روی سرور ذخیره شد'); } catch (e) { toast(syncMessage(e)); } };
+ACT.syncPull = async () => {
+  if (!confirm('دادهٔ این پروفایل با نسخهٔ سرور جایگزین شود؟ ابتدا از بخش پیشرفت خروجی بگیر.')) return;
+  try { const data = await SyncClient.pull(); S = Object.assign(DEFAULT(), data.state || {}); S.settings = Object.assign(DEFAULT().settings, S.settings || {}); await DB.set(stateKey(), S); toast('نسخهٔ سرور دریافت شد'); route(); } catch (e) { toast(syncMessage(e)); }
+};
+ACT.syncLogout = async () => { try { await SyncClient.logout(); toast('از حساب خارج شدی'); route(); } catch (e) { toast(syncMessage(e)); } };
 ACT.addProfile = async () => {
   const name = ($('#profileName') || {}).value?.trim();
   if (!name) return toast('نام را وارد کن');

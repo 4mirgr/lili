@@ -1,0 +1,17 @@
+name = "lili-german-backend"
+main = "src/index.ts"
+compatibility_date = "2026-10-23"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lili-german"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[vars]
+# Exact origins only; comma-separated. Never use * in production.
+ALLOWED_ORIGINS = "http://localhost:8788,https://4mirgr.github.io"
+SESSION_TTL_SECONDS = "2592000"
+
+# Set only with: wrangler secret put ADMIN_BOOTSTRAP_TOKEN
+# ADMIN_BOOTSTRAP_TOKEN is intentionally absent from this file.

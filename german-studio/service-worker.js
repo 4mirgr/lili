@@ -1,9 +1,12 @@
-const CACHE_NAME = 'lili-deutsch-v2';
+const CACHE_NAME = 'lili-deutsch-v5';
 const APP_SHELL = [
   './',
   './index.html',
   './app.js',
   './data.js',
+  './curriculum.js',
+  './learning-engine.js',
+  './sync-client.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
