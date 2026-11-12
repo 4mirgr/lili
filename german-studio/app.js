@@ -1,6 +1,7 @@
 'use strict';
 /* Lili Deutsch — offline PWA. Each of up to five local profiles has isolated progress. */
 const D = window.DATA;
+const STUDY = window.STUDY_CONTENT;
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fa = (n) => String(n).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
@@ -45,7 +46,7 @@ const DEFAULT = () => ({
   settings: { rate: 0.95, voice: '', newPerDay: 8, theme: 'auto' },
   done: {}, log: {}, srs: {}, userCards: [], gram: {}, pairs: {},
   essays: [], drafts: {}, beginnerWriting: {}, writingCycles: {}, speaks: [], highlights: [], lessonProgress: {}, diag: null, p1i: 0, cardi: 0,
-  curriculum: { completed: {}, skillScores: {}, examAttempts: [] }
+  curriculum: { completed: {}, skillScores: {}, examAttempts: [] }, studyLabs: {}
 });
 let S = DEFAULT();
 
@@ -107,7 +108,9 @@ function applyTheme() {
 
 /* ---------------- speech synthesis ---------------- */
 let voices = [];
-function loadVoices() { voices = (speechSynthesis.getVoices() || []).filter((v) => /^de[-_]/i.test(v.lang)); }
+function loadVoices() {
+  voices = (window.speechSynthesis?.getVoices() || []).filter((voice) => /^de(?:[-_]|$)/i.test(voice.lang));
+}
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 function speak(text, rate, onend) {
   if (!('speechSynthesis' in window)) { toast('این مرورگر TTS ندارد'); return; }
@@ -118,6 +121,10 @@ function speak(text, rate, onend) {
   if (v) u.voice = v;
   u.rate = rate || S.settings.rate;
   if (onend) u.onend = onend;
+  u.onerror = (event) => {
+    if (['canceled', 'interrupted'].includes(event.error)) return;
+    toast('پخش صدا ممکن نشد. صدای آلمانی را در تنظیمات دستگاه بررسی کن.');
+  };
   speechSynthesis.speak(u);
 }
 
@@ -171,13 +178,20 @@ function benchDue() {
 function planFor(key) {
   const tasks = [];
   const wd = new Date(key + 'T12:00:00').getDay(); // 0 Sun … 6 Sat
-  tasks.push({ k: 'srs', t: 'مرور کارت‌ها (SRS)', m: 8, h: '#practice/srs' });
-  if (wd !== 5) tasks.push({ k: 'pron', t: 'تلفظ: Shadowing یا جفت‌های کمینه', m: 10, h: '#pron' });
-  const beginner = nextBeginnerLesson();
+  const beginner = beginnerLessons().filter((lesson) => isDone('lesson-' + lesson.id, key)).pop() || nextBeginnerLesson();
   if (beginner) {
-    tasks.push({ k: 'lesson-' + beginner.id, t: `درس قدم‌به‌قدم: ${beginner.title}`, m: beginner.minutes, h: '#lesson/' + beginner.id });
+    tasks.push({ k: 'lesson-' + beginner.id, t: beginner.title, m: beginner.minutes, h: '#lesson/' + beginner.id },
+      { k: 'pron', t: 'گوش بده و تکرار کن', m: 4, h: '#pron' },
+      { k: 'srs', t: 'مرور واژه‌های درس', m: 5, h: '#practice/srs' });
     return tasks;
   }
+  tasks.push({ k: 'srs', t: 'مرور فلش‌کارت‌ها', m: 8, h: '#practice/srs' });
+  const bridge = STUDY.labs.filter((lab) => !['A0', 'A1'].includes(lab.level) && isDone('lab-' + lab.id, key)).pop() || nextStudyLab();
+  if (bridge) {
+    tasks.push({ k: 'lab-' + bridge.id, t: bridge.title, m: 15, h: '#studio/lab/' + bridge.id });
+    return tasks;
+  }
+  if (wd !== 5) tasks.push({ k: 'pron', t: 'تلفظ و تکرار هم‌زمان', m: 10, h: '#pron' });
   const rot = {
     6: [{ k: 'speak', t: 'ارائه و بحث تکمیلی', m: 12, h: '#speak/p2' }, { k: 'grammar', t: 'گرامر هدفمند (۱۰ سؤال)', m: 10, h: '#practice/gram/weak' }],
     0: [{ k: 'speak', t: 'روانی ۴/۳/۲ (یک موضوع، سه بار)', m: 12, h: '#speak/f432' }, { k: 'write', t: 'نوشتن: یک پاراگراف بدنه', m: 12, h: '#write' }],
@@ -201,9 +215,14 @@ function route() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   const parts = (location.hash.slice(1) || 'today').split('/');
   const name = parts[0];
-  const views = { today: vToday, path: vPath, lesson: vLesson, highlights: vHighlights, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI };
+  const views = { today: vToday, path: vPath, lesson: vLesson, highlights: vHighlights, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI, studio: vStudio, vocab: vVocab };
   (views[name] || vToday)(...parts.slice(1));
-  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === name));
+  document.querySelectorAll('#nav a').forEach((a) => {
+    const active = a.dataset.r.split(' ').includes(name);
+    a.classList.toggle('on', active);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
   const account = window.SyncClient?.currentUser();
   $('#daybadge').textContent = `${account?.user_metadata?.display_name || account?.email || activeProfile().name} | روز ${fa(dayNum() - dayNum(S.start) + 1)} | ماه ${fa(monthNo())} از ۲۴`;
   window.scrollTo(0, 0);
@@ -264,17 +283,22 @@ ACT.deleteHighlight = (b) => { if (!confirm('این هایلایت حذف شود
 /* ================= TRUE BEGINNER COURSE ================= */
 const beginnerLessons = () => window.BEGINNER_LESSONS || [];
 function nextBeginnerLesson() { return beginnerLessons().find((lesson) => !S.lessonProgress?.[lesson.id]?.done) || null; }
+function nextStudyLab() {
+  return STUDY.labs.find((lab) => !['A0', 'A1'].includes(lab.level) && !S.studyLabs?.[lab.id]?.done);
+}
 function vLesson(id) {
   const lesson = beginnerLessons().find((x) => x.id === id) || nextBeginnerLesson();
   if (!lesson) return render('<div class="card"><h2>درس‌های مقدماتی کامل شده‌اند.</h2><a class="btn" href="#path">ادامه مسیر</a></div>');
   const progress = S.lessonProgress?.[lesson.id] || {};
+  const offset = (beginnerLessons().indexOf(lesson) + 1) % lesson.quiz.o.length;
+  const answers = lesson.quiz.o.map((_, index) => (index + offset) % lesson.quiz.o.length);
   render(`<a class="back" href="#path">→ مسیر یادگیری</a><div class="spread"><h1>${esc(lesson.title)}</h1><span class="pill en">${lesson.level} · ${fa(lesson.minutes)} دقیقه</span></div>
     <div class="card accent"><h3>هدف امروز</h3><p>${esc(lesson.goal)}</p></div>
-    <div class="card"><h3>۱. پنج واژه و عبارت</h3>${lesson.words.map(([de,faText]) => `<div class="sent spread"><span><b class="en">${esc(de)}</b><br><span class="muted">${esc(faText)}</span></span><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.75">▶ بشنو</button></div>`).join('')}</div>
+    <div class="card"><h3>۱. واژه‌ها و عبارت‌ها</h3>${lesson.words.map(([de,faText]) => `<div class="sent spread"><span><b lang="de" class="en">${esc(de)}</b><br><span class="muted">${esc(faText)}</span></span><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.75">▶ بشنو</button></div>`).join('')}<div class="study-actions"><a href="#practice/srs">مرور فلش‌کارت‌ها</a></div></div>
     <div class="card"><h3>۲. نکتهٔ خیلی ساده</h3><p>${esc(lesson.explain)}</p></div>
     <div class="card"><h3>۳. مثال‌ها</h3>${lesson.examples.map(([de,faText]) => `<div class="sent"><div class="spread"><b class="en">${esc(de)}</b><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.78">▶</button></div><span class="muted">${esc(faText)}</span></div>`).join('')}</div>
     <div class="card soft"><h3>۴. حالا خودت بگو</h3><p>${esc(lesson.task)}</p></div>
-    <div class="card"><h3>۵. بررسی سریع</h3><p>${esc(lesson.quiz.q)}</p>${lesson.quiz.o.map((option,index) => `<button class="opt" data-act="lessonAnswer" data-id="${lesson.id}" data-k="${index}">${esc(option)}</button>`).join('')}<div id="lessonFeedback">${progress.done ? '<p class="explain">✓ این درس کامل شده است.</p>' : ''}</div></div>`);
+    <div class="card"><h3>۵. بررسی سریع</h3><p>${esc(lesson.quiz.q)}</p>${answers.map((index) => `<button class="opt" data-act="lessonAnswer" data-id="${lesson.id}" data-k="${index}"><span dir="auto">${esc(lesson.quiz.o[index])}</span></button>`).join('')}<div id="lessonFeedback" role="status">${progress.done ? '<p class="explain">✓ این درس کامل شده است.</p>' : ''}</div></div>`);
 }
 ACT.lessonAnswer = (b) => {
   const lesson = beginnerLessons().find((x) => x.id === b.dataset.id); if (!lesson) return;
@@ -283,9 +307,10 @@ ACT.lessonAnswer = (b) => {
   S.lessonProgress[lesson.id] = { attempts: old.attempts + 1, done: correct || old.done, at: new Date().toISOString() };
   document.querySelectorAll('[data-act=lessonAnswer]').forEach((x) => { x.disabled = true; if (Number(x.dataset.k) === lesson.quiz.a) x.classList.add('right'); });
   if (!correct) b.classList.add('wrong');
-  $('#lessonFeedback').innerHTML = correct ? `<p class="explain">✓ عالی! درس ثبت شد.</p><a class="btn" href="#lesson/${nextBeginnerLesson()?.id || ''}">درس بعدی</a>` : '<p class="explain">این بار درست نبود. پاسخ سبز را بلند بخوان و فردا دوباره مرور کن.</p>';
+  $('#lessonFeedback').innerHTML = correct ? `<p class="explain">✓ عالی! درس ثبت شد.</p><a class="btn" href="#lesson/${nextBeginnerLesson()?.id || ''}">درس بعدی</a>` : `<p class="explain">پاسخ سبز را بلند بخوان و دوباره امتحان کن.</p><button class="btn sub small" data-act="retryLesson" data-id="${lesson.id}">تلاش دوباره</button>`;
   if (correct) markDone('lesson-' + lesson.id, lesson.minutes); else save();
 };
+ACT.retryLesson = (button) => vLesson(button.dataset.id);
 
 /* ================= TODAY ================= */
 function vToday() {
@@ -293,9 +318,28 @@ function vToday() {
   const plan = planFor(k);
   const done = plan.filter((t) => isDone(t.k)).length;
   const total = plan.reduce((a, t) => a + t.m, 0);
-  const ph = phase();
+  const beginner = nextBeginnerLesson();
+  const bridge = beginner ? null : nextStudyLab();
+  const current = beginner || bridge;
+  const level = current?.level || 'A0–C1';
+  const queue = srsQueue();
   render(`
-    ${nextBeginnerLesson() ? `<div class="card accent"><h2>شروع از صفر: ${esc(nextBeginnerLesson().title)}</h2><p>${esc(nextBeginnerLesson().goal)} هیچ دانش قبلی لازم نیست.</p><a class="btn" href="#lesson/${nextBeginnerLesson().id}">شروع درس</a><a class="btn sub" href="#diag" style="margin-right:8px">از قبل آلمانی بلدم: تعیین سطح</a></div>` : (!S.diag ? `<div class="card soft"><h2>تعیین سطح اختیاری</h2><p>دورهٔ مقدماتی کامل شده؛ اگر قبلاً آلمانی خوانده‌ای می‌توانی سطح خودت را بسنجی.</p><a class="btn sub" href="#diag">آزمون تعیین سطح</a></div>` : '')}
+    <h1>داشبورد یادگیری</h1>
+    <section class="card dash-hero">
+      <p>${beginner?.id === 'a0-01' ? 'شروع آلمانی از صفر' : 'ادامهٔ یادگیری'}</p>
+      <h2>${esc(current?.title || 'تمرین مهارت‌های آلمانی')}</h2>
+      <p>${esc(beginner?.goal || bridge?.hint || 'تمرین‌های امروز را بر اساس مهارت انتخاب کن.')}</p>
+      <div class="row">
+        <a class="btn" href="${beginner ? '#lesson/' + beginner.id : bridge ? '#studio/lab/' + bridge.id : '#path'}">${current ? 'شروع درس' : 'مسیر یادگیری'}</a>
+        <a class="btn sub" href="#diag">تعیین سطح</a>
+      </div>
+    </section>
+    <div class="dash-stats">
+      <div class="card dash-stat"><span class="dash-icon" aria-hidden="true">◎</span><div><b>${esc(level)}</b><span class="muted">${current ? 'سطح درس پیشنهادی' : 'مسیر یادگیری'}</span></div></div>
+      <div class="card dash-stat"><span class="dash-icon" aria-hidden="true">✓</span><div><b>${fa(done)} از ${fa(plan.length)}</b><span class="muted">کارهای امروز</span></div></div>
+      <div class="card dash-stat"><span class="dash-icon" aria-hidden="true">▣</span><div><b>${fa(queue.due.length + queue.fresh.length)}</b><span class="muted">کارت آمادهٔ مرور</span></div></div>
+    </div>
+    <div class="dash-columns">
     <div class="card">
       <div class="spread"><h2>برنامهٔ امروز</h2><span class="pill">${fa(done)}/${fa(plan.length)} | حدود ${fa(total)} دقیقه</span></div>
       <div>${plan.map((t) => `
@@ -304,13 +348,11 @@ function vToday() {
           <a class="ttl" href="${t.h}">${esc(t.t)}</a><span class="min">${fa(t.m)} دقیقه</span>
         </div>`).join('')}</div>
     </div>
-    <div class="card soft">
-      <h3>فاز فعلی: ${ph.name}</h3>
-      <p class="muted">${ph.focus}</p>
-    </div>
-    <div class="card">
-      <h3>${nextBeginnerLesson() ? 'شنیدن امروز برای مبتدی' : 'ورودی شنیداری (بیرون از زمان اپ)'}</h3>
-      ${nextBeginnerLesson() ? `<p>فعلاً فقط جمله‌های درس «${esc(nextBeginnerLesson().title)}» را گوش کن و تکرار کن. خبر، پادکست طبیعی و متن سریع برای این مرحله مناسب نیست.</p><a class="btn sub" href="#lesson/${nextBeginnerLesson().id}">شنیدن با سرعت آهسته</a>` : `<p class="muted">در رفت‌وآمد یا ورزش. شنیدن زیاد پایهٔ لهجه است، ولی به‌تنهایی کافی نیست.</p>${D.listen.map((l) => `<p><b class="en">${esc(l.t)}</b><br><span class="muted">${esc(l.n)}</span></p>`).join('')}`}
+    <section class="card">
+      <h2>تمرین شنیدن</h2>
+      <p class="muted">${beginner ? 'به یک گفت‌وگوی کوتاه گوش بده و معنی‌اش را با دو سؤال بسنج.' : 'ابتدا بدون متن گوش بده، سپس برداشتت را بررسی کن.'}</p>
+      <div class="row"><a class="btn sub" href="#studio/lab/${bridge?.id || (beginner?.level === 'A1' ? 'meeting' : 'hello')}">گوش بده و پاسخ بده</a><a href="#studio/${beginner ? 'lessons' : 'news'}">${beginner ? 'همهٔ درس‌ها' : 'خبرهای آلمانی'}</a></div>
+    </section>
     </div>`);
 }
 ACT.toggle = (b) => {
@@ -342,7 +384,8 @@ function vPath() {
         <p>${esc(u.canDo)}</p><div class="row"><input type="number" min="0" max="100" inputmode="numeric" id="unit-${u.id}" placeholder="نمره ۰–۱۰۰" style="width:130px"><button class="btn small" data-act="unitScore" data-id="${u.id}">ثبت تلاش</button></div></details>`; }).join('')}</div>`;
   }).join('');
   render(`<h1>مسیر تسلط A0 تا C1</h1>
-    <div class="card"><div class="spread"><h2>شروع واقعی برای مبتدی</h2><span class="pill">${fa(Object.values(S.lessonProgress || {}).filter((x) => x.done).length)} از ${fa(beginnerLessons().length)}</span></div><p class="muted">هر درس فقط یک هدف، پنج واژه، یک نکته و یک تمرین کوتاه دارد.</p><div class="grid2">${beginnerCards}</div></div>
+    <div class="card"><div class="spread"><h2>دورهٔ مقدماتی A0 و A1</h2><span class="pill">${fa(Object.values(S.lessonProgress || {}).filter((x) => x.done).length)} از ${fa(beginnerLessons().length)}</span></div><div class="grid2">${beginnerCards}</div></div>
+    <div class="card spread"><div><h2>تمرین‌های خواندن و شنیدن تا C1</h2><p class="muted">گفت‌وگوی کوتاه، پیام روزمره و تحلیل متن.</p></div><a class="btn sub" href="#studio/lessons">دیدن درس‌ها</a></div>
     <div class="card accent"><h2>${next ? 'درس پیشنهادی: ' + esc(next.title) : 'همه واحدهای مسیر ثبت‌شده کامل شده‌اند'}</h2>
       ${next ? `<p>${esc(next.canDo)}</p><span class="pill en">${next.level}</span>` : ''}</div>
     <div class="card"><div class="spread"><h2>آمادگی Goethe B2</h2><span class="pill ${ready.ready ? 'on' : ''}">${ready.ready ? 'آماده' : 'در حال پیشرفت'}</span></div>
@@ -642,16 +685,35 @@ ACT.pqStart = (b) => {
 };
 
 /* ================= PRACTICE: SRS + GRAMMAR ================= */
-const allCards = () => D.deck.map((c) => ({ ...c, src: 'deck' })).concat(S.userCards.map((c) => ({ ...c, src: 'user' })));
+function lessonCards(lesson) {
+  return lesson.words.map(([de, meaning, example], index) => ({
+    id: 'word-' + lesson.id + '-' + index, f: meaning, b: de, e: example || '',
+    audio: de, src: 'lesson'
+  }));
+}
+function allCards() {
+  const userIds = new Set(S.userCards.map((card) => card.id));
+  return [
+    ...D.deck.map((card) => ({ ...card, src: 'deck' })),
+    ...beginnerLessons().flatMap(lessonCards).filter((card) => !userIds.has(card.id)),
+    ...S.userCards.map((card) => ({ ...card, src: 'user' }))
+  ];
+}
 function srsQueue() {
   const today = dayNum();
   const cards = allCards();
   const isDue = (state) => typeof state.due === 'string' ? Date.parse(state.due) <= Date.now() : state.due <= today;
   const due = cards.filter((c) => S.srs[c.id] && isDue(S.srs[c.id]));
   const introducedToday = cards.filter((c) => S.srs[c.id] && S.srs[c.id].first === today).length;
-  const fresh = cards.filter((c) => !S.srs[c.id]);
-  // user cards (from your own mistakes) come first among new cards
-  fresh.sort((a, b) => (a.src === 'user' ? -1 : 0) - (b.src === 'user' ? -1 : 0));
+  const starter = nextBeginnerLesson();
+  const current = new Set(starter ? lessonCards(starter).map((card) => card.id) : []);
+  const studied = new Set(beginnerLessons().filter((lesson) => S.lessonProgress?.[lesson.id]?.done).flatMap(lessonCards).map((card) => card.id));
+  const fresh = cards.filter((card) => {
+    if (S.srs[card.id]) return false;
+    return !starter || card.src === 'user' || current.has(card.id) || studied.has(card.id);
+  });
+  const priority = (card) => card.src === 'user' ? 0 : current.has(card.id) ? 1 : card.src === 'lesson' ? 2 : 3;
+  fresh.sort((a, b) => priority(a) - priority(b));
   return { due, fresh: fresh.slice(0, Math.max(0, S.settings.newPerDay - introducedToday)) };
 }
 function grade(card, g) {
@@ -667,19 +729,20 @@ function vPractice(sub, arg) {
   if (sub === 'gram') return gramSession(arg || 'mix');
   if (sub === 'add') return vAddCard();
   const q = srsQueue();
+  const starter = nextBeginnerLesson();
   const gs = Object.keys(D.gramCats).map((c) => { const st = S.gram[c] || { r: 0, n: 0 }; return { c, acc: st.n ? st.r / st.n : null, n: st.n }; });
   render(`
     <h1>تمرین</h1>
     <div class="card">
       <div class="spread"><h2>مرور فاصله‌دار (SRS)</h2><span class="pill">${fa(q.due.length)} مرور | ${fa(q.fresh.length)} جدید</span></div>
-      <p class="muted">collocationها و خطاهای خودت. کارت‌هایی که از اشتباه‌های گرامری‌ات ساخته می‌شوند زودتر نمایش داده می‌شوند.</p>
-      <div class="row"><a class="btn" href="#practice/srs">شروع مرور</a><a class="btn sub" href="#practice/add">+ کارت دستی</a></div>
+      <p class="muted">پیش از دیدن پاسخ، واژه یا جمله را بلند بگو.</p>
+      <div class="row"><a class="btn" href="#practice/srs">شروع مرور</a><a class="btn sub" href="#vocab">واژه‌نامه</a><a class="btn sub" href="#practice/add">کارت دستی</a></div>
     </div>
-    <div class="card">
+    ${starter ? `<div class="card"><h2>گرامر در درس امروز</h2><p>${esc(starter.explain)}</p><a class="btn sub" href="#lesson/${starter.id}">مثال و تمرین</a></div>` : `<div class="card">
       <div class="spread"><h2>گرامر (خطاهای رایج فارسی‌زبان‌ها)</h2><a class="btn small" href="#practice/gram/weak">نقاط ضعف من</a></div>
       ${gs.map((g) => `<a href="#practice/gram/${g.c}" style="text-decoration:none;color:inherit"><div class="sent"><div class="spread"><span>${esc(D.gramCats[g.c])}</span><span class="muted">${g.acc === null ? '—' : fa(Math.round(g.acc * 100)) + '٪'}</span></div>
         <div class="meter"><i style="width:${g.acc === null ? 0 : Math.round(g.acc * 100)}%"></i></div></div></a>`).join('')}
-    </div>
+    </div>`}
     <div class="card soft"><a href="#diag">آزمون تعیین سطح ${S.diag ? '(انجام شده | ' + fa(S.diag.score) + '/' + fa(D.diag.length) + ')' : ''}</a></div>`);
 }
 function srsSession() {
@@ -696,13 +759,13 @@ function srsSession() {
     const c = queue[0];
     render(`<a class="back" href="#practice">→ تمرین</a><p class="muted">${fa(queue.length)} کارت باقی‌مانده</p>
       <div class="card flash">
-        <div class="front en" style="text-align:center">${esc(c.f)}</div>
+        <div class="front" dir="auto">${esc(c.f)}</div>
         ${c.h ? `<p class="muted" style="margin-top:8px">${esc(c.h)}</p>` : ''}
         <div id="back"><button class="btn" style="margin-top:14px" data-act="reveal">نمایش جواب (اول بلند بگو)</button></div>
       </div>`);
     ACT.reveal = () => {
       $('#back').innerHTML = `<div class="ans en" style="text-align:center">${esc(c.b)}</div>${c.e ? `<p class="explain">${esc(c.e)}</p>` : ''}
-        <button class="say" data-act="say" data-text="${esc(c.b.replace(/\(.*?\)/g, '').replace(/→.*$/, ''))}" style="margin-top:8px">▶ تلفظ</button>
+        <button class="say" data-act="say" data-text="${esc(c.audio || c.b.replace(/\(.*?\)/g, '').replace(/→.*$/, ''))}" style="margin-top:8px">▶ تلفظ</button>
         <div class="grades"><button class="btn sub" data-g="0" data-act="gr">بلد نبودم</button><button class="btn sub" data-g="1" data-act="gr">سخت</button><button class="btn" data-g="2" data-act="gr">خوب</button><button class="btn ghost" data-g="3" data-act="gr">آسان</button></div>`;
     };
     ACT.gr = (b) => {
@@ -930,6 +993,152 @@ function vAI() {
     <button class="btn block" data-act="aiDone">گفتگو انجام شد (ثبت در برنامه)</button>`);
 }
 ACT.aiDone = () => { markDone('ai'); toast('ثبت شد'); location.hash = '#today'; };
+
+/* ================= GRADED STUDY LIBRARY ================= */
+const studioTabs = [['lessons', 'درس‌ها'], ['resources', 'منابع منتخب'], ['news', 'آلمانی با خبر']];
+const foldSearch = (text) => String(text).normalize('NFKC').toLowerCase().replace(/ي/g, 'ی').replace(/ك/g, 'ک').trim();
+function readSearch(query) {
+  try { return decodeURIComponent(query || '').slice(0, 100); } catch (_) { return ''; }
+}
+$('#studioSearch').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const query = new FormData(event.currentTarget).get('query').trim().slice(0, 100);
+  location.hash = query ? '#studio/search/' + encodeURIComponent(query) : '#studio';
+});
+function vStudio(tab = 'lessons', arg) {
+  if (tab === 'lab') return vStudyLab(arg);
+  const isSearch = tab === 'search';
+  const search = readSearch(isSearch ? arg : '');
+  const query = foldSearch(search);
+  const matches = (...values) => !query || values.some((value) => foldSearch(value).includes(query));
+  const filterLevel = STUDY.levels.includes(arg) ? arg : '';
+  const starters = beginnerLessons().filter((lesson) => (isSearch || lesson.level === filterLevel || !filterLevel)
+    && matches(lesson.title, lesson.level, lesson.goal, ...lesson.words.flat()));
+  const labs = STUDY.labs.filter((lab) => (isSearch || lab.level === filterLevel || !filterLevel)
+    && matches(lab.title, lab.level, lab.text, ...lab.words.flat()));
+  const resources = STUDY.resources.filter(([name, kind, levels, note]) => (
+    tab !== 'news' || kind === 'خبر'
+  ) && matches(name, kind, levels, note));
+  const lessonTiles = starters.map((lesson) => `<a class="tile" href="#lesson/${lesson.id}"><b>${esc(lesson.title)}</b><span>${lesson.level} · ${S.lessonProgress?.[lesson.id]?.done ? 'تکمیل شد' : 'درس مقدماتی'}</span></a>`);
+  const labTiles = labs.map((lab) => `<a class="tile" href="#studio/lab/${lab.id}"><b>${esc(lab.title)}</b><span>${lab.level} · ${S.studyLabs?.[lab.id]?.done ? 'تکمیل شد' : 'خواندن و شنیدن'}</span></a>`);
+  const resourceTiles = resources.map(([name, kind, levels, note, url, source]) => `<article class="card">
+    <div class="row"><span class="pill">${esc(kind)}</span><span class="pill en">${esc(levels)}</span></div>
+    <h3 class="en" lang="de">${esc(name)}</h3><p>${esc(note)}</p>
+    <div class="row"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">باز کردن منبع ↗</a><a class="muted" href="https://github.com/awesome-german/${source}" target="_blank" rel="noopener noreferrer">فهرست مرجع</a></div>
+  </article>`);
+  const showLessons = tab === 'lessons' || isSearch;
+  const showResources = tab === 'resources' || tab === 'news' || isSearch;
+  render(`<h1>${isSearch ? 'جست‌وجو' : 'درس و منابع'}</h1>
+    <nav class="row studio-tabs" aria-label="بخش‌های منابع">${studioTabs.map(([key, label]) =>
+      `<a class="icon-btn" href="#studio/${key}" ${tab === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<a class="icon-btn" href="#vocab">واژه‌نامه</a></nav>
+    ${isSearch ? `<p>نتیجه برای «${esc(search)}»</p>` : ''}
+    ${tab === 'lessons' ? `<div class="row studio-tabs" aria-label="سطح درس">
+      <a class="icon-btn" href="#studio/lessons" ${!filterLevel ? 'aria-current="page"' : ''}>همه</a>
+      ${STUDY.levels.map((level) => `<a class="icon-btn en" href="#studio/lessons/${level}" ${level === filterLevel ? 'aria-current="page"' : ''}>${level}</a>`).join('')}</div>` : ''}
+    ${tab === 'news' ? '<div class="card soft"><p>یک خبر کوتاه متناسب با سطح خودت انتخاب کن. اول موضوع را پیدا کن، بعد سه عبارت یادداشت کن و در پایان خبر را با کلمات خودت بگو.</p></div>' : ''}
+    ${showLessons && lessonTiles.length ? '<h2>درس‌های پایه</h2><div class="studio-grid">' + lessonTiles.join('') + '</div>' : ''}
+    ${showLessons && labTiles.length ? '<h2>خواندن، شنیدن و گفتن</h2><div class="studio-grid">' + labTiles.join('') + '</div>' : ''}
+    ${showResources && resourceTiles.length ? '<h2>منابع بیرونی</h2><div class="studio-grid">' + resourceTiles.join('') + '</div>' : ''}
+    ${isSearch && !(lessonTiles.length || labTiles.length || resourceTiles.length) ? '<p>چیزی پیدا نشد. یک واژهٔ کوتاه‌تر را امتحان کن.</p>' : ''}`);
+}
+
+function vStudyLab(id) {
+  const lab = STUDY.labs.find((item) => item.id === id);
+  if (!lab) return vStudio();
+  const record = S.studyLabs?.[id] || {};
+  const [grammar, explanation, example] = lab.grammar;
+  const coach = `Act as my German tutor at ${lab.level}. ${lab.scenario} Use one question per turn. Wait for my answer before continuing. Give one correction in Persian and ask me to try again. If you only have a transcript, comment on wording and grammar. Start in German.`;
+  render(`<a class="back" href="#studio/lessons/${lab.level}">→ درس‌های ${lab.level}</a>
+    <h1>${esc(lab.title)}</h1>
+    <div class="dash-columns">
+      <section class="card study-listen"><h2>بشنو و بخوان</h2><p>${esc(lab.hint)}</p>
+        <div class="row">
+          <button class="btn small" data-act="say" data-text="${esc(lab.text)}" data-rate="0.75">پخش آهسته</button>
+          <button class="btn sub small" data-act="say" data-text="${esc(lab.text)}" data-rate="0.95">پخش معمولی</button>
+        </div>
+        <details><summary>نمایش متن آلمانی</summary><p class="study-german en" lang="de">${esc(lab.text)}</p></details>
+      </section>
+      <section class="card"><h2>گرامر در جمله</h2><h3>${esc(grammar)}</h3><p>${esc(explanation)}</p><p class="en" lang="de">${esc(example)}</p></section>
+    </div>
+    <section class="card"><h2>واژه‌ها در بافت</h2>${lab.words.map(([word, meaning, sentence], index) => `<div class="sent spread">
+      <div><b class="en" lang="de">${esc(word)}</b> · ${esc(meaning)}<div class="en muted" lang="de">${esc(sentence)}</div></div>
+      <div class="row"><button class="say" data-act="say" data-text="${esc(sentence)}">▶ بشنو</button>
+      <button class="btn sub small" data-act="studyCard" data-id="${id}" data-index="${index}">افزودن فلش‌کارت</button></div>
+    </div>`).join('')}</section>
+    <section class="card"><h2>درک مطلب</h2><form id="studyCheck" data-id="${id}">
+      ${lab.checks.map(([question, options], index) => `<fieldset class="study-question"><legend>${esc(question)}</legend>
+        ${options.map((option, n) => `<label class="chkrow"><input type="radio" name="q${index}" value="${n}" required><span dir="auto">${esc(option)}</span></label>`).join('')}
+      </fieldset>`).join('')}
+      <button class="btn" type="submit">بررسی پاسخ‌ها</button><p id="studyResult" role="status">${record.done ? '✓ این تمرین کامل شده است.' : ''}</p></form>
+    </section>
+    <section class="card"><h2>نوبت تو</h2><p>${esc(lab.output)}</p>
+      <textarea class="study-output" id="studyDraft" lang="de" maxlength="5000" aria-label="پاسخ آلمانی">${esc(record.draft || '')}</textarea>
+      <div class="row"><button class="btn small" data-act="studyDraft" data-id="${id}">ذخیرهٔ پاسخ</button><a href="#speak">رفتن به گفتار</a></div>
+      <details class="study-actions"><summary>تمرین مکالمه با مربی هوش مصنوعی</summary>
+        <p>دستور را در ابزار دلخواهت وارد کن. اپ این متن یا نوشتهٔ تو را به سرویس دیگری ارسال نمی‌کند.</p>
+        <pre class="copybox" id="studyPrompt">${esc(coach)}</pre><button class="btn sub small" data-act="copy" data-src="#studyPrompt">کپی دستور مکالمه</button>
+      </details>
+    </section>`);
+}
+document.addEventListener('submit', (event) => {
+  const form = event.target;
+  if (form.id !== 'studyCheck') return;
+  event.preventDefault();
+  const lab = STUDY.labs.find((item) => item.id === form.dataset.id);
+  if (!lab) return;
+  const answers = new FormData(form);
+  const results = lab.checks.map(([, , answer], index) => answers.get('q' + index) === String(answer));
+  const correct = results.filter(Boolean).length;
+  const allCorrect = correct === lab.checks.length;
+  const record = (S.studyLabs ||= {})[lab.id] ||= {};
+  record.attempts = (record.attempts || 0) + 1;
+  record.best = Math.max(record.best || 0, correct);
+  $('#studyResult').textContent = allCorrect ? '✓ هر دو پاسخ درست است.' :
+    `پاسخ‌های درست: ${fa(correct)} از ${fa(lab.checks.length)}. دوباره گوش بده و پاسخ‌ها را بررسی کن.`;
+  if (allCorrect && !record.done) {
+    record.done = true;
+    markDone('lab-' + lab.id, 15);
+  }
+  save();
+});
+ACT.studyDraft = (button) => {
+  const record = (S.studyLabs ||= {})[button.dataset.id] ||= {};
+  record.draft = $('#studyDraft').value.trim();
+  save();
+  toast('پاسخ ذخیره شد');
+};
+function studyWords() {
+  return [...beginnerLessons(), ...STUDY.labs].flatMap((lesson) => lessonCards(lesson).map((card) => ({ ...card, level: lesson.level })));
+}
+function vVocab(level) {
+  const selected = STUDY.levels.includes(level) ? level : (nextBeginnerLesson()?.level || 'A2');
+  const cards = studyWords().filter((card) => card.level === selected);
+  render(`<h1>واژه‌نامه و فلش‌کارت</h1>
+    <div class="row studio-tabs">${STUDY.levels.map((item) => `<a class="icon-btn en" href="#vocab/${item}" ${item === selected ? 'aria-current="page"' : ''}>${item}</a>`).join('')}</div>
+    <div class="card spread"><span>${fa(cards.length)} واژه و عبارت در ${selected}</span><div class="row"><a class="btn sub small" href="#practice/srs">شروع مرور</a><button class="btn sub small" data-act="exportStudyWords" data-level="${selected}">خروجی Anki (TSV)</button></div></div>
+    <div class="studio-grid">${cards.map((card) => `<article class="card"><h3 class="en" lang="de">${esc(card.b)}</h3><p>${esc(card.f)}</p>${card.e ? `<p class="en muted" lang="de">${esc(card.e)}</p>` : ''}
+      <div class="row"><button class="say" data-act="say" data-text="${esc(card.audio)}">▶ تلفظ</button><button class="btn sub small" data-act="studyCard" data-card="${card.id}">افزودن به مرور</button></div></article>`).join('')}</div>`);
+}
+ACT.studyCard = (button) => {
+  const id = button.dataset.card || 'word-' + button.dataset.id + '-' + button.dataset.index;
+  const card = studyWords().find((item) => item.id === id);
+  if (!card) return;
+  if (S.userCards.some((item) => item.id === id)) return toast('این کارت در فهرست مرور توست');
+  S.userCards.push({ id, f: card.f, b: card.b, e: card.e, audio: card.audio });
+  save();
+  toast('فلش‌کارت برای مرور ذخیره شد');
+};
+ACT.exportStudyWords = (button) => {
+  const level = button.dataset.level;
+  const rows = studyWords().filter((card) => card.level === level).map((card) =>
+    [card.f, [card.b, card.e].filter(Boolean).join(' — '), level].join('\t'));
+  const url = URL.createObjectURL(new Blob(['#separator:tab\n#tags column:3\n', rows.join('\n')], { type: 'text/tab-separated-values;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'lili-vocabulary-' + level + '.tsv';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 
 /* ================= PROGRESS ================= */
 function vProgress() {
