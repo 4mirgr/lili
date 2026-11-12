@@ -1,14 +1,22 @@
-const CACHE_NAME = 'lili-deutsch-v9';
+importScripts('./media-index.js?v=10');
+const CACHE_NAME = 'lili-deutsch-v10';
+const LESSON_MEDIA = [
+  './media/desk-vocabulary.jpg',
+  './media/formal-letter.png',
+  ...Object.values(globalThis.LILI_AUDIO).map((path) => './' + path)
+];
 const APP_SHELL = [
   './',
   './index.html',
-  './app.js?v=9',
+  './app.js?v=10',
   './data.js',
   './curriculum.js',
   './learning-engine.js',
   './beginner-content.js?v=9',
-  './study-content.js?v=9',
-  './dashboard.css?v=9',
+  './study-content.js?v=10',
+  './course.js?v=10',
+  './media-index.js?v=10',
+  './dashboard.css?v=10',
   './supabase-config.js',
   './sync-client.js',
   './manifest.json',
@@ -16,8 +24,14 @@ const APP_SHELL = [
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
   './icons/favicon-64.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  ...LESSON_MEDIA
 ];
+const scope = self.registration.scope;
+const indexUrl = new URL('index.html', scope);
+const entryPaths = new Set([new URL(scope).pathname, indexUrl.pathname]);
+const appUrls = new Set(APP_SHELL.map((path) => new URL(path, scope).href));
+const mediaUrls = new Set(LESSON_MEDIA.map((path) => new URL(path, scope).href));
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -38,12 +52,40 @@ self.addEventListener('activate', (event) => {
 // Network-first (with a short timeout for slow connections) so content updates arrive;
 // cache fallback keeps it working offline.
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+async function getMedia(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request.url);
+  if (!cached) return fetch(request);
+  const range = request.headers.get('range')?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!range || (!range[1] && !range[2])) return cached;
+  const blob = await cached.blob();
+  const start = range[1] ? Number(range[1]) : Math.max(0, blob.size - Number(range[2]));
+  const end = range[1] && range[2] ? Math.min(Number(range[2]), blob.size - 1) : blob.size - 1;
+  if (start > end) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${blob.size}` } });
+  const body = blob.slice(start, end + 1, blob.type);
+  return new Response(body, {
+    status: 206,
+    headers: {
+      'Content-Type': blob.type || 'audio/mpeg',
+      'Content-Length': String(body.size),
+      'Content-Range': `bytes ${start}-${end}/${blob.size}`,
+      'Accept-Ranges': 'bytes'
+    }
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || !request.url.startsWith(self.registration.scope)) return;
+  if (request.method !== 'GET' || !request.url.startsWith(scope)) return;
+  if (mediaUrls.has(request.url)) {
+    event.respondWith(getMedia(request));
+    return;
+  }
   const navigation = request.mode === 'navigate';
-  const cacheKey = navigation ? new URL('index.html', self.registration.scope).href : request.url;
-  if (!navigation && !APP_SHELL.some((path) => new URL(path, self.registration.scope).href === cacheKey)) return;
+  if (navigation && !entryPaths.has(new URL(request.url).pathname)) return;
+  const cacheKey = navigation ? indexUrl.href : request.url;
+  if (!navigation && !appUrls.has(cacheKey)) return;
   event.respondWith(
     withTimeout(fetch(request), 4000).then(async (response) => {
       if (response.ok) {

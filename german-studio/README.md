@@ -8,7 +8,9 @@
 - سقف پنج حساب Lili در خود پایگاه‌داده (بدون نیاز به دعوت‌نامه)
 - جداسازی کامل دادهٔ هر حساب با Row Level Security
 - چهارده درس خرد واقعی A0/A1، از سلام و معرفی تا خرید، مسیر و معرفی ۶۰ثانیه‌ای
-- هفت تمرین اصلی خواندن و شنیدن A0 تا C1 با واژگان در جمله، نکتهٔ دستوری، پرسش درک مطلب، پاسخ نوشتاری و سناریوی مکالمه
+- یازده تمرین خواندن و شنیدن A0 تا C1 با واژگان در جمله، نکتهٔ دستوری، پرسش درک مطلب، پاسخ نوشتاری و سناریوی مکالمه
+- مسیر واحد از A0 با دو سؤال در هر درس پایه، تمرین شنیداری قبل از عبور از A0/A1 و پیشنهاد اولین درس تکمیل‌نشده
+- ۲۷ قطعهٔ صوتی Thorsten برای متن تمرین‌های شنیداری و گزیدهٔ جمله‌ها و واژه‌های A0، با پخش آفلاین و کنترل سرعت
 - داشبورد راست‌چین با نوار کناری، جست‌وجوی دوزبانه و چیدمان واکنش‌گرا بر اساس قالب Dompet
 - واژه‌نامهٔ سطح‌بندی‌شده با تلفظ، افزودن به مرور و خروجی UTF-8 برای ورود به Anki
 - حالت آفلاین و پروفایل‌های محلی برای استفاده بدون حساب
@@ -45,6 +47,16 @@ python3 -m http.server 8080
 - [Vocabulary](https://github.com/awesome-german/vocabulary) برای دیکشنری و الگوهای تلفظ
 - [Grammar](https://github.com/awesome-german/grammar) برای دسته‌بندی نکات دستوری و تمرین تکمیلی
 - [News](https://github.com/awesome-german/news) برای شنیدن و خواندن خبر بر اساس سطح
+
+### منابع افزوده
+
+- دسته‌بندی چهار مهارت در صفحهٔ آزمون از [exam.one](https://github.com/evgentrigub/exam.one) الهام گرفته است. تمرین‌های لی‌لی تألیفی‌اند. صفحهٔ آزمون به [نمونه‌های رسمی گوته](https://www.goethe.de/ins/de/de/prf/exc.html) و [Wordfeather](https://wordfeather.com/) پیوند می‌دهد.
+- موضوع‌های سطح‌بندی‌شده و مثال‌های کاربردی با مرور [Awesome German](https://github.com/willianpaixao/awesome-german)، [Deutschland-Book-A1](https://github.com/Hazrat-Ali9/Deutschland-Book-A1)، [Deutschland-Book-A2](https://github.com/Hazrat-Ali9/Deutschland-Book-A2)، [Deutschland-Preposition](https://github.com/Hazrat-Ali9/Deutschland-Preposition) و فهرست‌های واژگان و آمادگی آزمون کاربر انتخاب شدند.
+- در تمرین اطلاعیهٔ B2، اجزای یک اسم ترکیبی بررسی می‌شود. در جست‌وجو، صورت‌های جایگزین مانند `ae` و `ss` هم پذیرفته می‌شوند. منابع بررسی‌شده [German Compound Splitter](https://github.com/repodiac/german_compound_splitter) و [German Transliterate](https://github.com/repodiac/german_transliterate) هستند.
+- تمرین ویرایش C1 با الهام از [humanizer-de](https://github.com/marmbiz/humanizer-de) بر حفظ واقعیت‌ها و روشن‌کردن فعل، عامل و زمان تمرکز دارد.
+- تصویر نامهٔ رسمی از [قالب DIN 5008 اثر Alexey Abel](https://github.com/alexeyabel/latex-briefvorlage-din-5008) با مجوز MIT آمده است. منابع تصویری ناشران و فایل‌های دارای مجوز نامشخص، از جمله PDFهای [German Vocabulary With Picture](https://github.com/Hazrat-Ali9/German-Vocabulary-With-Picture)، وارد مخزن نشده‌اند.
+- عکس درس اشیاء از [Books in stack with lamps اثر chuttersnap](https://commons.wikimedia.org/wiki/File:Books_in_stack_with_lamps_(Unsplash).jpg) با مجوز CC0 آمده و برای نمایش در وب کوچک شده است.
+- کلیپ‌ها با [Thorsten-Voice](https://github.com/thorstenMueller/Thorsten-Voice) و [مدل Piper تحت CC0](https://huggingface.co/rhasspy/piper-voices/blob/main/de/de_DE/thorsten/medium/MODEL_CARD) از متن‌های لی‌لی ساخته شده‌اند. بازتولید با `python german-studio/tools/build-lesson-audio.py /path/to/de_DE-thorsten-medium.onnx`، همراه با فایل تنظیمات همان مدل، `piper-tts`، Node و FFmpeg.
 
 ## حساب‌ها و داده‌ها
 

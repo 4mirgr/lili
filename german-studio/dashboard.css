@@ -113,6 +113,12 @@ body { padding: 0; }
 .study-question legend { font-weight: 700; }
 .study-question label { min-height: 36px; cursor: pointer; }
 .study-question input { accent-color: var(--dashboard-teal); }
+.question-feedback:empty { display: none; }
+.question-feedback { margin: 6px 24px 2px 0; }
+.course-level .meter { margin-top: 9px; }
+.course-figure { margin: 0 0 14px; padding: 12px; border: 1px solid var(--dashboard-line); border-radius: 20px; background: var(--surface); text-align: center; }
+.course-figure img { display: block; width: auto; height: auto; max-width: 100%; max-height: 460px; margin: auto; border-radius: 12px; }
+.course-figure figcaption { margin-top: 10px; color: var(--muted); }
 .study-listen summary { margin-block: 12px; }
 .study-actions { margin-top: 12px; }
 .toast, .highlight-fab { bottom: 22px; }

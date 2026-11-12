@@ -2,6 +2,7 @@
 /* Lili Deutsch — offline PWA. Each of up to five local profiles has isolated progress. */
 const D = window.DATA;
 const STUDY = window.STUDY_CONTENT;
+const COURSE = LiliCourse.build(window.BEGINNER_LESSONS, STUDY.labs);
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fa = (n) => String(n).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
@@ -108,11 +109,36 @@ function applyTheme() {
 
 /* ---------------- speech synthesis ---------------- */
 let voices = [];
+let lessonAudio;
+let speechTurn = 0;
 function loadVoices() {
   voices = (window.speechSynthesis?.getVoices() || []).filter((voice) => /^de(?:[-_]|$)/i.test(voice.lang));
 }
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+function stopSpeech() {
+  speechTurn++;
+  lessonAudio?.pause();
+  lessonAudio = null;
+  window.speechSynthesis?.cancel();
+}
 function speak(text, rate, onend) {
+  stopSpeech();
+  const clip = window.LILI_AUDIO?.[text];
+  if (!clip) return browserSpeech(text, rate, onend);
+  const turn = speechTurn;
+  const audio = new Audio(clip);
+  lessonAudio = audio;
+  audio.playbackRate = rate || S.settings.rate;
+  audio.onended = () => { if (turn === speechTurn) onend?.(); };
+  const fallback = () => {
+    if (turn !== speechTurn || lessonAudio !== audio) return;
+    lessonAudio = null;
+    browserSpeech(text, rate, onend);
+  };
+  audio.onerror = fallback;
+  audio.play().catch(fallback);
+}
+function browserSpeech(text, rate, onend) {
   if (!('speechSynthesis' in window)) { toast('این مرورگر TTS ندارد'); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
@@ -170,7 +196,6 @@ const isDone = (k, d = todayKey()) => !!(S.done[d] && S.done[d][k]);
 
 /* ---------------- daily plan ---------------- */
 function monthNo() { return Math.max(1, Math.floor((dayNum() - dayNum(S.start)) / 30.44) + 1); }
-function phase() { const m = monthNo(); return D.phases.find((p) => m <= p.to) || D.phases[D.phases.length - 1]; }
 function benchDue() {
   const last = S.speaks.filter((s) => s.mode === 'bench').map((s) => dayNum(s.date)).sort((a, b) => b - a)[0];
   return last === undefined || dayNum() - last >= 30;
@@ -178,19 +203,15 @@ function benchDue() {
 function planFor(key) {
   const tasks = [];
   const wd = new Date(key + 'T12:00:00').getDay(); // 0 Sun … 6 Sat
-  const beginner = beginnerLessons().filter((lesson) => isDone('lesson-' + lesson.id, key)).pop() || nextBeginnerLesson();
-  if (beginner) {
-    tasks.push({ k: 'lesson-' + beginner.id, t: beginner.title, m: beginner.minutes, h: '#lesson/' + beginner.id },
-      { k: 'pron', t: 'گوش بده و تکرار کن', m: 4, h: '#pron' },
-      { k: 'srs', t: 'مرور واژه‌های درس', m: 5, h: '#practice/srs' });
+  const step = COURSE.filter((item) => LiliCourse.done(item, S) && isDone(item.type + '-' + item.id, key)).pop()
+    || nextCourseStep();
+  if (step) {
+    tasks.push({ k: step.type + '-' + step.id, t: step.title, m: step.minutes, h: step.href });
+    if (step.type === 'lesson') tasks.push({ k: 'pron', t: 'گوش بده و تکرار کن', m: 4, h: '#pron' });
+    tasks.push({ k: 'srs', t: 'مرور واژه‌های درس', m: 5, h: '#practice/srs' });
     return tasks;
   }
   tasks.push({ k: 'srs', t: 'مرور فلش‌کارت‌ها', m: 8, h: '#practice/srs' });
-  const bridge = STUDY.labs.filter((lab) => !['A0', 'A1'].includes(lab.level) && isDone('lab-' + lab.id, key)).pop() || nextStudyLab();
-  if (bridge) {
-    tasks.push({ k: 'lab-' + bridge.id, t: bridge.title, m: 15, h: '#studio/lab/' + bridge.id });
-    return tasks;
-  }
   if (wd !== 5) tasks.push({ k: 'pron', t: 'تلفظ و تکرار هم‌زمان', m: 10, h: '#pron' });
   const rot = {
     6: [{ k: 'speak', t: 'ارائه و بحث تکمیلی', m: 12, h: '#speak/p2' }, { k: 'grammar', t: 'گرامر هدفمند (۱۰ سؤال)', m: 10, h: '#practice/gram/weak' }],
@@ -212,7 +233,7 @@ function route() {
   pendingHighlight = '';
   $('#highlightBtn')?.classList.remove('show');
   if (cleanup) { try { cleanup(); } catch (e) { /* ignore */ } cleanup = null; }
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  stopSpeech();
   const parts = (location.hash.slice(1) || 'today').split('/');
   const name = parts[0];
   const views = { today: vToday, path: vPath, lesson: vLesson, highlights: vHighlights, speak: vSpeak, pron: vPron, practice: vPractice, write: vWrite, progress: vProgress, settings: vSettings, diag: vDiag, ai: vAI, studio: vStudio, vocab: vVocab };
@@ -282,35 +303,81 @@ ACT.deleteHighlight = (b) => { if (!confirm('این هایلایت حذف شود
 
 /* ================= TRUE BEGINNER COURSE ================= */
 const beginnerLessons = () => window.BEGINNER_LESSONS || [];
-function nextBeginnerLesson() { return beginnerLessons().find((lesson) => !S.lessonProgress?.[lesson.id]?.done) || null; }
-function nextStudyLab() {
-  return STUDY.labs.find((lab) => !['A0', 'A1'].includes(lab.level) && !S.studyLabs?.[lab.id]?.done);
+function nextCourseStep() { return LiliCourse.next(COURSE, S); }
+function nextBeginnerLesson() {
+  const step = nextCourseStep();
+  if (step?.type === 'lesson') return step;
+  return beginnerLessons().filter((lesson) => lesson.level === step?.level).pop();
+}
+function continueCourseLink() {
+  const next = nextCourseStep();
+  return next
+    ? `<a class="btn" href="${next.href}">ادامهٔ مسیر · ${esc(next.title)}</a>`
+    : '<a class="btn" href="#path">دیدن پیشرفت دوره</a>';
+}
+function courseImage([src, alt, caption, credit]) {
+  return `<figure class="course-figure">
+    <a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${esc(alt)}" loading="lazy"></a>
+    <figcaption>${esc(caption)}${credit ? ` <a href="${credit}" target="_blank" rel="noopener noreferrer">منبع تصویر ↗</a>` : ''}</figcaption>
+  </figure>`;
+}
+function lessonQuestions(lesson) {
+  const { q, o, a } = lesson.quiz;
+  const offset = (beginnerLessons().indexOf(lesson) + 1) % o.length;
+  const options = o.map((_, index) => o[(index + offset) % o.length]);
+  return [[q, options, (a - offset + o.length) % o.length], STUDY.followUps[lesson.id]].filter(Boolean);
+}
+function checkFields(questions) {
+  return questions.map(([question, options], index) => `<fieldset class="study-question">
+    <legend>${esc(question)}</legend>
+    ${options.map((option, n) => `<label class="chkrow"><input type="radio" name="q${index}" value="${n}" required><span dir="auto">${esc(option)}</span></label>`).join('')}
+    <p class="question-feedback muted" data-feedback="${index}"></p>
+  </fieldset>`).join('');
+}
+function gradeChecks(form, questions) {
+  const answers = new FormData(form);
+  return questions.reduce((total, [, options, answer], index) => {
+    const correct = answers.get('q' + index) === String(answer);
+    $(`[data-feedback="${index}"]`, form).textContent = correct ? '✓ درست' : `مرور کن · پاسخ درست: ${options[answer]}`;
+    return total + Number(correct);
+  }, 0);
 }
 function vLesson(id) {
   const lesson = beginnerLessons().find((x) => x.id === id) || nextBeginnerLesson();
   if (!lesson) return render('<div class="card"><h2>درس‌های مقدماتی کامل شده‌اند.</h2><a class="btn" href="#path">ادامه مسیر</a></div>');
   const progress = S.lessonProgress?.[lesson.id] || {};
-  const offset = (beginnerLessons().indexOf(lesson) + 1) % lesson.quiz.o.length;
-  const answers = lesson.quiz.o.map((_, index) => (index + offset) % lesson.quiz.o.length);
   render(`<a class="back" href="#path">→ مسیر یادگیری</a><div class="spread"><h1>${esc(lesson.title)}</h1><span class="pill en">${lesson.level} · ${fa(lesson.minutes)} دقیقه</span></div>
     <div class="card accent"><h3>هدف امروز</h3><p>${esc(lesson.goal)}</p></div>
+    ${lesson.id === 'a0-07' ? courseImage(['media/desk-vocabulary.jpg', 'میز چوبی، چراغ مطالعه و چند کتاب روی میز', 'در تصویر میز، کتاب و چراغ را پیدا کن و هر کدام را همراه آرتیکل بگو.', 'https://commons.wikimedia.org/wiki/File:Books_in_stack_with_lamps_(Unsplash).jpg']) : ''}
     <div class="card"><h3>۱. واژه‌ها و عبارت‌ها</h3>${lesson.words.map(([de,faText]) => `<div class="sent spread"><span><b lang="de" class="en">${esc(de)}</b><br><span class="muted">${esc(faText)}</span></span><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.75">▶ بشنو</button></div>`).join('')}<div class="study-actions"><a href="#practice/srs">مرور فلش‌کارت‌ها</a></div></div>
     <div class="card"><h3>۲. نکتهٔ خیلی ساده</h3><p>${esc(lesson.explain)}</p></div>
     <div class="card"><h3>۳. مثال‌ها</h3>${lesson.examples.map(([de,faText]) => `<div class="sent"><div class="spread"><b class="en">${esc(de)}</b><button class="say" data-act="say" data-text="${esc(de)}" data-rate="0.78">▶</button></div><span class="muted">${esc(faText)}</span></div>`).join('')}</div>
     <div class="card soft"><h3>۴. حالا خودت بگو</h3><p>${esc(lesson.task)}</p></div>
-    <div class="card"><h3>۵. بررسی سریع</h3><p>${esc(lesson.quiz.q)}</p>${answers.map((index) => `<button class="opt" data-act="lessonAnswer" data-id="${lesson.id}" data-k="${index}"><span dir="auto">${esc(lesson.quiz.o[index])}</span></button>`).join('')}<div id="lessonFeedback" role="status">${progress.done ? '<p class="explain">✓ این درس کامل شده است.</p>' : ''}</div></div>`);
+    <section class="card"><h2>۵. بررسی یادگیری</h2><form id="lessonCheck" data-id="${lesson.id}">
+      ${checkFields(lessonQuestions(lesson))}
+      <button class="btn" type="submit">بررسی پاسخ‌ها</button>
+      <p id="lessonFeedback" role="status">${progress.done ? '✓ این درس کامل شده است.' : ''}</p>
+      <div id="lessonContinue">${progress.done ? continueCourseLink() : ''}</div>
+    </form></section>`);
 }
-ACT.lessonAnswer = (b) => {
-  const lesson = beginnerLessons().find((x) => x.id === b.dataset.id); if (!lesson) return;
-  const correct = Number(b.dataset.k) === lesson.quiz.a;
-  S.lessonProgress = S.lessonProgress || {}; const old = S.lessonProgress[lesson.id] || { attempts: 0 };
-  S.lessonProgress[lesson.id] = { attempts: old.attempts + 1, done: correct || old.done, at: new Date().toISOString() };
-  document.querySelectorAll('[data-act=lessonAnswer]').forEach((x) => { x.disabled = true; if (Number(x.dataset.k) === lesson.quiz.a) x.classList.add('right'); });
-  if (!correct) b.classList.add('wrong');
-  $('#lessonFeedback').innerHTML = correct ? `<p class="explain">✓ عالی! درس ثبت شد.</p><a class="btn" href="#lesson/${nextBeginnerLesson()?.id || ''}">درس بعدی</a>` : `<p class="explain">پاسخ سبز را بلند بخوان و دوباره امتحان کن.</p><button class="btn sub small" data-act="retryLesson" data-id="${lesson.id}">تلاش دوباره</button>`;
-  if (correct) markDone('lesson-' + lesson.id, lesson.minutes); else save();
-};
-ACT.retryLesson = (button) => vLesson(button.dataset.id);
+function submitLessonCheck(form) {
+  const lesson = beginnerLessons().find((item) => item.id === form.dataset.id);
+  if (!lesson) return;
+  const questions = lessonQuestions(lesson);
+  const score = gradeChecks(form, questions);
+  const allCorrect = score === questions.length;
+  const record = (S.lessonProgress ||= {})[lesson.id] ||= {};
+  record.attempts = (record.attempts || 0) + 1;
+  record.at = new Date().toISOString();
+  if (allCorrect && !record.done) {
+    record.done = true;
+    markDone('lesson-' + lesson.id, lesson.minutes);
+  }
+  $('#lessonFeedback').textContent = allCorrect ? '✓ درس ثبت شد.' :
+    `${fa(score)} از ${fa(questions.length)} پاسخ درست است. گزینه‌ها را بررسی کن و دوباره پاسخ بده.`;
+  if (record.done) $('#lessonContinue').innerHTML = continueCourseLink();
+  save();
+}
 
 /* ================= TODAY ================= */
 function vToday() {
@@ -318,9 +385,8 @@ function vToday() {
   const plan = planFor(k);
   const done = plan.filter((t) => isDone(t.k)).length;
   const total = plan.reduce((a, t) => a + t.m, 0);
-  const beginner = nextBeginnerLesson();
-  const bridge = beginner ? null : nextStudyLab();
-  const current = beginner || bridge;
+  const current = nextCourseStep();
+  const beginner = current?.type === 'lesson' ? current : null;
   const level = current?.level || 'A0–C1';
   const queue = srsQueue();
   render(`
@@ -328,9 +394,9 @@ function vToday() {
     <section class="card dash-hero">
       <p>${beginner?.id === 'a0-01' ? 'شروع آلمانی از صفر' : 'ادامهٔ یادگیری'}</p>
       <h2>${esc(current?.title || 'تمرین مهارت‌های آلمانی')}</h2>
-      <p>${esc(beginner?.goal || bridge?.hint || 'تمرین‌های امروز را بر اساس مهارت انتخاب کن.')}</p>
+      <p>${esc(current?.goal || current?.hint || 'تمرین‌های امروز را بر اساس مهارت انتخاب کن.')}</p>
       <div class="row">
-        <a class="btn" href="${beginner ? '#lesson/' + beginner.id : bridge ? '#studio/lab/' + bridge.id : '#path'}">${current ? 'شروع درس' : 'مسیر یادگیری'}</a>
+        <a class="btn" href="${current?.href || '#path'}">${current ? 'شروع درس' : 'مسیر یادگیری'}</a>
         <a class="btn sub" href="#diag">تعیین سطح</a>
       </div>
     </section>
@@ -349,9 +415,10 @@ function vToday() {
         </div>`).join('')}</div>
     </div>
     <section class="card">
-      <h2>تمرین شنیدن</h2>
-      <p class="muted">${beginner ? 'به یک گفت‌وگوی کوتاه گوش بده و معنی‌اش را با دو سؤال بسنج.' : 'ابتدا بدون متن گوش بده، سپس برداشتت را بررسی کن.'}</p>
-      <div class="row"><a class="btn sub" href="#studio/lab/${bridge?.id || (beginner?.level === 'A1' ? 'meeting' : 'hello')}">گوش بده و پاسخ بده</a><a href="#studio/${beginner ? 'lessons' : 'news'}">${beginner ? 'همهٔ درس‌ها' : 'خبرهای آلمانی'}</a></div>
+      <h2>${['A0', 'A1'].includes(level) ? 'فلش‌کارت‌های سطح من' : 'تمرین تکمیلی'}</h2>
+      <div class="row">${['A0', 'A1'].includes(level)
+        ? `<a class="btn sub" href="#vocab/${level}">واژه‌نامهٔ ${level}</a>`
+        : '<a class="btn sub" href="#studio/news">آلمانی با خبر</a><a href="#studio/exam">تمرین آزمون</a>'}</div>
     </section>
     </div>`);
 }
@@ -369,43 +436,65 @@ ACT.toggle = (b) => {
 
 /* ================= MASTERY PATH ================= */
 function vPath() {
+  const next = nextCourseStep();
+  const completed = COURSE.filter((step) => LiliCourse.done(step, S)).length;
+  const levels = LiliCourse.levels.map((level) => {
+    const steps = COURSE.filter((item) => item.level === level);
+    const done = steps.filter((step) => LiliCourse.done(step, S)).length;
+    return `<a class="tile course-level" href="#studio/lessons/${level}">
+      <b class="en">${level}</b><span>${fa(done)} از ${fa(steps.length)} درس تکمیل شد</span>
+      <div class="meter" aria-hidden="true"><i style="width:${100 * done / steps.length}%"></i></div>
+    </a>`;
+  });
+  render(`<h1>مسیر یادگیری</h1>
+    <section class="card"><p>${fa(completed)} از ${fa(COURSE.length)} درس و تمرین تکمیل شد.</p>
+      ${next ? `<a class="btn" href="${next.href}">درس بعدی · ${esc(next.title)}</a>` : '<p>تمرین‌های مسیر اصلی را کامل کردی.</p>'}
+    </section>
+    <div class="studio-grid">${levels.join('')}</div>
+    <a class="btn sub" href="#studio/exam">آمادگی Goethe B2</a>`);
+}
+function vExam(openUnit) {
   const C = window.CURRICULUM;
   if (!C) return render('<div class="card">موتور مسیر آموزشی بارگذاری نشد.</div>');
   S.curriculum = Object.assign({ completed: {}, skillScores: {}, examAttempts: [] }, S.curriculum || {});
-  const next = C.nextLesson(S.curriculum);
   const ready = C.b2ExamReadiness(S.curriculum);
-  const beginnerCards = beginnerLessons().map((lesson) => { const done = !!S.lessonProgress?.[lesson.id]?.done; return `<a class="tile" href="#lesson/${lesson.id}"><div class="spread"><b>${done ? '✓ ' : ''}${esc(lesson.title)}</b><span class="pill en">${lesson.level}</span></div><span>${esc(lesson.goal)} · ${fa(lesson.minutes)} دقیقه</span></a>`; }).join('');
   const levelCards = C.levels.map((level) => {
     const p = C.levelProgress(S.curriculum, level);
     const units = C.units.filter((u) => u.level === level);
     return `<div class="card"><div class="spread"><h2 class="en">${level}</h2><span class="pill ${p.gatePassed ? 'on' : ''}">${fa(p.percent)}٪ ${p.gatePassed ? '· عبور' : ''}</span></div>
       <p class="muted">${esc(C.levelDefinitions[level].canDo.join(' · '))}</p>
-      ${units.map((u) => { const r = S.curriculum.completed[u.id] || {}; return `<details class="sent"><summary>${esc(u.title)} ${r.score ? `· ${fa(r.score)}٪ / ${fa(r.attempts || 0)} تلاش` : ''}</summary>
+      ${units.map((u) => { const r = S.curriculum.completed[u.id] || {}; return `<details class="sent" ${openUnit === u.id ? 'open' : ''}><summary>${esc(u.title)} ${r.score ? `· ${fa(r.score)}٪ / ${fa(r.attempts || 0)} تلاش` : ''}</summary>
         <p>${esc(u.canDo)}</p><div class="row"><input type="number" min="0" max="100" inputmode="numeric" id="unit-${u.id}" placeholder="نمره ۰–۱۰۰" style="width:130px"><button class="btn small" data-act="unitScore" data-id="${u.id}">ثبت تلاش</button></div></details>`; }).join('')}</div>`;
   }).join('');
-  render(`<h1>مسیر تسلط A0 تا C1</h1>
-    <div class="card"><div class="spread"><h2>دورهٔ مقدماتی A0 و A1</h2><span class="pill">${fa(Object.values(S.lessonProgress || {}).filter((x) => x.done).length)} از ${fa(beginnerLessons().length)}</span></div><div class="grid2">${beginnerCards}</div></div>
-    <div class="card spread"><div><h2>تمرین‌های خواندن و شنیدن تا C1</h2><p class="muted">گفت‌وگوی کوتاه، پیام روزمره و تحلیل متن.</p></div><a class="btn sub" href="#studio/lessons">دیدن درس‌ها</a></div>
-    <div class="card accent"><h2>${next ? 'درس پیشنهادی: ' + esc(next.title) : 'همه واحدهای مسیر ثبت‌شده کامل شده‌اند'}</h2>
-      ${next ? `<p>${esc(next.canDo)}</p><span class="pill en">${next.level}</span>` : ''}</div>
-    <div class="card"><div class="spread"><h2>آمادگی Goethe B2</h2><span class="pill ${ready.ready ? 'on' : ''}">${ready.ready ? 'آماده' : 'در حال پیشرفت'}</span></div>
-      <p class="muted">نیازمند سه آزمون کامل متوالی با حداقل ۷۰ در هر ماژول و ارزیابی معتبر خروجی‌های گفتار/نوشتار است. این شاخص تضمین رسمی قبولی نیست.</p>
+  render(`<a class="back" href="#studio">→ درس و منابع</a><h1>آمادگی آزمون Goethe</h1>
+    <div class="card"><h2>تمرین کوتاه B2</h2><div class="grid2">
+      <a class="tile" href="#studio/lab/city"><b>خواندن</b><span>تشخیص موضع‌ها و جزئیات</span></a>
+      <a class="tile" href="#studio/lab/notice"><b>شنیدن</b><span>تشخیص جزئیات و استثنا</span></a>
+      <a class="tile" href="#write/e/w04"><b>نوشتن</b><span>استدلال، بازخورد و بازنویسی</span></a>
+      <a class="tile" href="#speak/p2/k03"><b>گفتار</b><span>ارائهٔ زمان‌دار و خودارزیابی</span></a>
+    </div><div class="row study-actions">
+      <a href="https://www.goethe.de/ins/de/de/prf/exc.html" target="_blank" rel="noopener noreferrer">نمونه‌های رسمی A1 تا C1 ↗</a>
+      <a href="https://www.goethe.de/en/spr/prf/ueb/pb2.html" target="_blank" rel="noopener noreferrer">تمرین کامل B2 گوته ↗</a>
+      <a href="https://wordfeather.com/" target="_blank" rel="noopener noreferrer">تمرین تکمیلی Wordfeather ↗</a>
+    </div></div>
+    <div class="card"><div class="spread"><h2>ثبت نمرهٔ آزمون کامل B2</h2><span class="pill ${ready.ready ? 'on' : ''}">${ready.ready ? 'آماده' : 'در حال پیشرفت'}</span></div>
+      <p class="muted">نمرهٔ هر چهار ماژول را از آزمون کامل وارد کن. شاخص لی‌لی ارزیابی مهارت‌های B2، سه آزمون با حداقل ۷۰ در هر ماژول و تأیید مربی برای گفتار و نوشتار را بررسی می‌کند.</p>
       <div class="grid2">${['reading','listening','writing','speaking'].map((k) => `<label>${({reading:'خواندن',listening:'شنیدن',writing:'نوشتن',speaking:'گفتار'})[k]}<input type="number" min="0" max="100" id="mock-${k}" style="width:100%" placeholder="۰–۱۰۰"></label>`).join('')}</div>
       <label class="chkrow"><input type="checkbox" id="mock-validated"> نوشتن و گفتار این آزمون با rubric توسط مربی/ارزیاب بررسی شده‌اند</label>
       <button class="btn" data-act="addMock">ثبت آزمون کامل</button></div>
-    ${levelCards}`);
+    <details class="card" ${openUnit ? 'open' : ''}><summary>ارزیابی مهارت‌ها توسط مربی</summary>${levelCards}</details>`);
 }
 ACT.unitScore = (b) => {
-  const input = $('#unit-' + b.dataset.id); const score = Number(input.value);
+  const input = $('#unit-' + b.dataset.id); const score = input.valueAsNumber;
   if (!Number.isFinite(score) || score < 0 || score > 100) return toast('نمره معتبر ۰ تا ۱۰۰ وارد کن');
   const old = S.curriculum.completed[b.dataset.id] || { attempts: 0 };
   S.curriculum.completed[b.dataset.id] = { score, attempts: Number(old.attempts || 0) + 1, at: new Date().toISOString() };
-  save(); vPath();
+  save(); vExam(b.dataset.id);
 };
 ACT.addMock = () => {
   const attempt = { at: new Date().toISOString(), validated: $('#mock-validated').checked };
-  for (const k of ['reading','listening','writing','speaking']) { const n = Number($('#mock-' + k).value); if (!Number.isFinite(n) || n < 0 || n > 100) return toast('هر چهار نمره آزمون را وارد کن'); attempt[k] = n; }
-  S.curriculum.examAttempts.push(attempt); S.curriculum.examAttempts = S.curriculum.examAttempts.slice(-12); save(); vPath();
+  for (const k of ['reading','listening','writing','speaking']) { const n = $('#mock-' + k).valueAsNumber; if (!Number.isFinite(n) || n < 0 || n > 100) return toast('هر چهار نمره آزمون را وارد کن'); attempt[k] = n; }
+  S.curriculum.examAttempts.push(attempt); S.curriculum.examAttempts = S.curriculum.examAttempts.slice(-12); save(); vExam(); toast('نتیجهٔ آزمون ثبت شد');
 };
 
 /* ================= SPEAKING ================= */
@@ -693,9 +782,13 @@ function lessonCards(lesson) {
 }
 function allCards() {
   const userIds = new Set(S.userCards.map((card) => card.id));
+  const taughtCards = COURSE.flatMap(lessonCards);
   return [
-    ...D.deck.map((card) => ({ ...card, src: 'deck' })),
-    ...beginnerLessons().flatMap(lessonCards).filter((card) => !userIds.has(card.id)),
+    ...D.deck.map((card) => {
+      const equivalent = card.f === card.b && taughtCards.find((item) => item.b === card.b);
+      return equivalent ? { ...equivalent, id: card.id, src: 'deck' } : { ...card, src: 'deck' };
+    }),
+    ...taughtCards.filter((card) => !userIds.has(card.id)),
     ...S.userCards.map((card) => ({ ...card, src: 'user' }))
   ];
 }
@@ -703,18 +796,22 @@ function srsQueue() {
   const today = dayNum();
   const cards = allCards();
   const isDue = (state) => typeof state.due === 'string' ? Date.parse(state.due) <= Date.now() : state.due <= today;
-  const due = cards.filter((c) => S.srs[c.id] && isDue(S.srs[c.id]));
-  const introducedToday = cards.filter((c) => S.srs[c.id] && S.srs[c.id].first === today).length;
-  const starter = nextBeginnerLesson();
-  const current = new Set(starter ? lessonCards(starter).map((card) => card.id) : []);
-  const studied = new Set(beginnerLessons().filter((lesson) => S.lessonProgress?.[lesson.id]?.done).flatMap(lessonCards).map((card) => card.id));
+  const lastReview = (card) => Date.parse(S.srs[card.id].lastReview || '') || 0;
+  const known = LiliCourse.uniqueCards(cards.filter((card) => S.srs[card.id]).sort((a, b) => lastReview(b) - lastReview(a)));
+  const due = known.filter((card) => isDue(S.srs[card.id]));
+  const introducedToday = known.filter((card) => S.srs[card.id].first === today).length;
+  const step = nextCourseStep();
+  const current = new Set(step ? lessonCards(step).map((card) => card.id) : []);
+  const studied = new Set(COURSE.filter((item) => LiliCourse.done(item, S)).flatMap(lessonCards).map((card) => card.id));
+  const learnedKeys = new Set(known.map(LiliCourse.cardKey));
   const fresh = cards.filter((card) => {
-    if (S.srs[card.id]) return false;
-    return !starter || card.src === 'user' || current.has(card.id) || studied.has(card.id);
+    if (learnedKeys.has(LiliCourse.cardKey(card))) return false;
+    if (card.src === 'deck') return !step && card.f !== card.b;
+    return card.src === 'user' || current.has(card.id) || studied.has(card.id);
   });
   const priority = (card) => card.src === 'user' ? 0 : current.has(card.id) ? 1 : card.src === 'lesson' ? 2 : 3;
   fresh.sort((a, b) => priority(a) - priority(b));
-  return { due, fresh: fresh.slice(0, Math.max(0, S.settings.newPerDay - introducedToday)) };
+  return { due, fresh: LiliCourse.uniqueCards(fresh).slice(0, Math.max(0, S.settings.newPerDay - introducedToday)) };
 }
 function grade(card, g) {
   const today = dayNum();
@@ -779,17 +876,20 @@ function srsSession() {
   show();
 }
 function vAddCard() {
+  const cards = LiliCourse.uniqueCards(S.userCards);
   render(`<a class="back" href="#practice">→ تمرین</a><h1>کارت جدید</h1>
     <div class="card"><p class="muted">برای اصلاحاتی که مربی یا خودت پیدا کرده‌ای. بهترین فرمت: جلو = جملهٔ غلط یا جای‌خالی؛ پشت = نسخهٔ درست.</p>
       <p>جلو:</p><textarea class="short" id="cf" placeholder="Ich helfe den Mann. → ?"></textarea>
       <p>پشت:</p><textarea class="short" id="cb" placeholder="Ich helfe dem Mann."></textarea>
       <p>توضیح (اختیاری، فارسی):</p><input type="text" id="ce" style="width:100%">
       <button class="btn" style="margin-top:10px" data-act="addCard">افزودن</button></div>
-    <div class="card"><h3>کارت‌های خودت (${fa(S.userCards.length)})</h3>${S.userCards.slice().reverse().slice(0, 30).map((c) => `<div class="sent en">${esc(c.f)}<br><b>${esc(c.b)}</b> <button class="say" data-act="delCard" data-id="${c.id}">حذف</button></div>`).join('') || '<p class="muted">—</p>'}</div>`);
+    <div class="card"><h3>کارت‌های خودت (${fa(cards.length)})</h3>${cards.slice().reverse().slice(0, 30).map((c) => `<div class="sent en">${esc(c.f)}<br><b>${esc(c.b)}</b> <button class="say" data-act="delCard" data-id="${esc(c.id)}">حذف</button></div>`).join('') || '<p class="muted">—</p>'}</div>`);
 }
 ACT.addCard = () => {
   const f = $('#cf').value.trim(), b = $('#cb').value.trim();
   if (!f || !b) return toast('جلو و پشت هر دو لازم است');
+  const key = LiliCourse.cardKey({ f, b });
+  if (S.userCards.some((card) => LiliCourse.cardKey(card) === key)) return toast('این کارت قبلاً ذخیره شده است');
   S.userCards.push({ id: 'u' + uid(), f, b, e: $('#ce').value.trim() }); save(); toast('اضافه شد'); vAddCard();
 };
 ACT.delCard = (b) => { S.userCards = S.userCards.filter((c) => c.id !== b.dataset.id); delete S.srs[b.dataset.id]; save(); vAddCard(); };
@@ -995,8 +1095,10 @@ function vAI() {
 ACT.aiDone = () => { markDone('ai'); toast('ثبت شد'); location.hash = '#today'; };
 
 /* ================= GRADED STUDY LIBRARY ================= */
-const studioTabs = [['lessons', 'درس‌ها'], ['resources', 'منابع منتخب'], ['news', 'آلمانی با خبر']];
-const foldSearch = (text) => String(text).normalize('NFKC').toLowerCase().replace(/ي/g, 'ی').replace(/ك/g, 'ک').trim();
+const studioTabs = [['lessons', 'درس‌ها'], ['resources', 'منابع منتخب'], ['news', 'آلمانی با خبر'], ['exam', 'آزمون گوته']];
+const foldSearch = (text) => String(text).normalize('NFKC').toLowerCase()
+  .replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/\u200c/g, ' ').replace(/\s+/g, ' ').trim();
+const germanSearch = (text) => text.replace(/[äöüß]/g, (letter) => ({ ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' })[letter]);
 function readSearch(query) {
   try { return decodeURIComponent(query || '').slice(0, 100); } catch (_) { return ''; }
 }
@@ -1007,17 +1109,21 @@ $('#studioSearch').addEventListener('submit', (event) => {
 });
 function vStudio(tab = 'lessons', arg) {
   if (tab === 'lab') return vStudyLab(arg);
+  if (tab === 'exam') return vExam();
   const isSearch = tab === 'search';
   const search = readSearch(isSearch ? arg : '');
   const query = foldSearch(search);
-  const matches = (...values) => !query || values.some((value) => foldSearch(value).includes(query));
-  const filterLevel = STUDY.levels.includes(arg) ? arg : '';
+  const matches = (...values) => !query || values.some((value) => {
+    const candidate = foldSearch(value);
+    return candidate.includes(query) || germanSearch(candidate).includes(germanSearch(query));
+  });
+  const filterLevel = LiliCourse.levels.includes(arg) ? arg : (arg === 'all' || isSearch ? '' : (nextCourseStep()?.level || 'A0'));
   const starters = beginnerLessons().filter((lesson) => (isSearch || lesson.level === filterLevel || !filterLevel)
-    && matches(lesson.title, lesson.level, lesson.goal, ...lesson.words.flat()));
+    && matches(lesson.title, lesson.level, lesson.goal, ...lesson.words.flat(), ...lesson.examples.flat()));
   const labs = STUDY.labs.filter((lab) => (isSearch || lab.level === filterLevel || !filterLevel)
     && matches(lab.title, lab.level, lab.text, ...lab.words.flat()));
   const resources = STUDY.resources.filter(([name, kind, levels, note]) => (
-    tab !== 'news' || kind === 'خبر'
+    isSearch || (tab === 'news' ? kind === 'خبر' : kind !== 'خبر')
   ) && matches(name, kind, levels, note));
   const lessonTiles = starters.map((lesson) => `<a class="tile" href="#lesson/${lesson.id}"><b>${esc(lesson.title)}</b><span>${lesson.level} · ${S.lessonProgress?.[lesson.id]?.done ? 'تکمیل شد' : 'درس مقدماتی'}</span></a>`);
   const labTiles = labs.map((lab) => `<a class="tile" href="#studio/lab/${lab.id}"><b>${esc(lab.title)}</b><span>${lab.level} · ${S.studyLabs?.[lab.id]?.done ? 'تکمیل شد' : 'خواندن و شنیدن'}</span></a>`);
@@ -1033,8 +1139,8 @@ function vStudio(tab = 'lessons', arg) {
       `<a class="icon-btn" href="#studio/${key}" ${tab === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<a class="icon-btn" href="#vocab">واژه‌نامه</a></nav>
     ${isSearch ? `<p>نتیجه برای «${esc(search)}»</p>` : ''}
     ${tab === 'lessons' ? `<div class="row studio-tabs" aria-label="سطح درس">
-      <a class="icon-btn" href="#studio/lessons" ${!filterLevel ? 'aria-current="page"' : ''}>همه</a>
-      ${STUDY.levels.map((level) => `<a class="icon-btn en" href="#studio/lessons/${level}" ${level === filterLevel ? 'aria-current="page"' : ''}>${level}</a>`).join('')}</div>` : ''}
+      <a class="icon-btn" href="#studio/lessons/all" ${!filterLevel ? 'aria-current="page"' : ''}>همه</a>
+      ${LiliCourse.levels.map((level) => `<a class="icon-btn en" href="#studio/lessons/${level}" ${level === filterLevel ? 'aria-current="page"' : ''}>${level}</a>`).join('')}</div>` : ''}
     ${tab === 'news' ? '<div class="card soft"><p>یک خبر کوتاه متناسب با سطح خودت انتخاب کن. اول موضوع را پیدا کن، بعد سه عبارت یادداشت کن و در پایان خبر را با کلمات خودت بگو.</p></div>' : ''}
     ${showLessons && lessonTiles.length ? '<h2>درس‌های پایه</h2><div class="studio-grid">' + lessonTiles.join('') + '</div>' : ''}
     ${showLessons && labTiles.length ? '<h2>خواندن، شنیدن و گفتن</h2><div class="studio-grid">' + labTiles.join('') + '</div>' : ''}
@@ -1050,6 +1156,7 @@ function vStudyLab(id) {
   const coach = `Act as my German tutor at ${lab.level}. ${lab.scenario} Use one question per turn. Wait for my answer before continuing. Give one correction in Persian and ask me to try again. If you only have a transcript, comment on wording and grammar. Start in German.`;
   render(`<a class="back" href="#studio/lessons/${lab.level}">→ درس‌های ${lab.level}</a>
     <h1>${esc(lab.title)}</h1>
+    ${lab.image ? courseImage(lab.image) : ''}
     <div class="dash-columns">
       <section class="card study-listen"><h2>بشنو و بخوان</h2><p>${esc(lab.hint)}</p>
         <div class="row">
@@ -1066,13 +1173,14 @@ function vStudyLab(id) {
       <button class="btn sub small" data-act="studyCard" data-id="${id}" data-index="${index}">افزودن فلش‌کارت</button></div>
     </div>`).join('')}</section>
     <section class="card"><h2>درک مطلب</h2><form id="studyCheck" data-id="${id}">
-      ${lab.checks.map(([question, options], index) => `<fieldset class="study-question"><legend>${esc(question)}</legend>
-        ${options.map((option, n) => `<label class="chkrow"><input type="radio" name="q${index}" value="${n}" required><span dir="auto">${esc(option)}</span></label>`).join('')}
-      </fieldset>`).join('')}
-      <button class="btn" type="submit">بررسی پاسخ‌ها</button><p id="studyResult" role="status">${record.done ? '✓ این تمرین کامل شده است.' : ''}</p></form>
+      ${checkFields(lab.checks)}
+      <button class="btn" type="submit">بررسی پاسخ‌ها</button><p id="studyResult" role="status">${record.done ? '✓ این تمرین کامل شده است.' : ''}</p>
+      <div id="studyContinue">${record.done ? continueCourseLink() : ''}</div></form>
     </section>
     <section class="card"><h2>نوبت تو</h2><p>${esc(lab.output)}</p>
       <textarea class="study-output" id="studyDraft" lang="de" maxlength="5000" aria-label="پاسخ آلمانی">${esc(record.draft || '')}</textarea>
+      ${lab.checklist ? `<fieldset class="study-question"><legend>بازبینی پیش از ذخیره</legend>
+        ${lab.checklist.map((item, i) => `<label class="chkrow"><input type="checkbox" name="reviewItem" value="${i}" ${record.review?.includes(i) ? 'checked' : ''}>${esc(item)}</label>`).join('')}</fieldset>` : ''}
       <div class="row"><button class="btn small" data-act="studyDraft" data-id="${id}">ذخیرهٔ پاسخ</button><a href="#speak">رفتن به گفتار</a></div>
       <details class="study-actions"><summary>تمرین مکالمه با مربی هوش مصنوعی</summary>
         <p>دستور را در ابزار دلخواهت وارد کن. اپ این متن یا نوشتهٔ تو را به سرویس دیگری ارسال نمی‌کند.</p>
@@ -1082,13 +1190,16 @@ function vStudyLab(id) {
 }
 document.addEventListener('submit', (event) => {
   const form = event.target;
+  if (form.id === 'lessonCheck') {
+    event.preventDefault();
+    submitLessonCheck(form);
+    return;
+  }
   if (form.id !== 'studyCheck') return;
   event.preventDefault();
   const lab = STUDY.labs.find((item) => item.id === form.dataset.id);
   if (!lab) return;
-  const answers = new FormData(form);
-  const results = lab.checks.map(([, , answer], index) => answers.get('q' + index) === String(answer));
-  const correct = results.filter(Boolean).length;
+  const correct = gradeChecks(form, lab.checks);
   const allCorrect = correct === lab.checks.length;
   const record = (S.studyLabs ||= {})[lab.id] ||= {};
   record.attempts = (record.attempts || 0) + 1;
@@ -1099,32 +1210,36 @@ document.addEventListener('submit', (event) => {
     record.done = true;
     markDone('lab-' + lab.id, 15);
   }
+  if (record.done) $('#studyContinue').innerHTML = continueCourseLink();
   save();
 });
 ACT.studyDraft = (button) => {
   const record = (S.studyLabs ||= {})[button.dataset.id] ||= {};
   record.draft = $('#studyDraft').value.trim();
+  record.review = [...document.querySelectorAll('[name="reviewItem"]:checked')].map((item) => Number(item.value));
   save();
   toast('پاسخ ذخیره شد');
 };
-function studyWords() {
-  return [...beginnerLessons(), ...STUDY.labs].flatMap((lesson) => lessonCards(lesson).map((card) => ({ ...card, level: lesson.level })));
-}
+const courseWords = () => COURSE.flatMap((lesson) => lessonCards(lesson).map((card) => ({ ...card, level: lesson.level })));
+const studyWords = () => LiliCourse.uniqueCards(courseWords());
 function vVocab(level) {
-  const selected = STUDY.levels.includes(level) ? level : (nextBeginnerLesson()?.level || 'A2');
+  const selected = LiliCourse.levels.includes(level) ? level : (nextCourseStep()?.level || 'C1');
   const cards = studyWords().filter((card) => card.level === selected);
   render(`<h1>واژه‌نامه و فلش‌کارت</h1>
-    <div class="row studio-tabs">${STUDY.levels.map((item) => `<a class="icon-btn en" href="#vocab/${item}" ${item === selected ? 'aria-current="page"' : ''}>${item}</a>`).join('')}</div>
+    <div class="row studio-tabs">${LiliCourse.levels.map((item) => `<a class="icon-btn en" href="#vocab/${item}" ${item === selected ? 'aria-current="page"' : ''}>${item}</a>`).join('')}</div>
     <div class="card spread"><span>${fa(cards.length)} واژه و عبارت در ${selected}</span><div class="row"><a class="btn sub small" href="#practice/srs">شروع مرور</a><button class="btn sub small" data-act="exportStudyWords" data-level="${selected}">خروجی Anki (TSV)</button></div></div>
     <div class="studio-grid">${cards.map((card) => `<article class="card"><h3 class="en" lang="de">${esc(card.b)}</h3><p>${esc(card.f)}</p>${card.e ? `<p class="en muted" lang="de">${esc(card.e)}</p>` : ''}
       <div class="row"><button class="say" data-act="say" data-text="${esc(card.audio)}">▶ تلفظ</button><button class="btn sub small" data-act="studyCard" data-card="${card.id}">افزودن به مرور</button></div></article>`).join('')}</div>`);
 }
 ACT.studyCard = (button) => {
   const id = button.dataset.card || 'word-' + button.dataset.id + '-' + button.dataset.index;
-  const card = studyWords().find((item) => item.id === id);
-  if (!card) return;
-  if (S.userCards.some((item) => item.id === id)) return toast('این کارت در فهرست مرور توست');
-  S.userCards.push({ id, f: card.f, b: card.b, e: card.e, audio: card.audio });
+  const selected = courseWords().find((item) => item.id === id);
+  if (!selected) return;
+  const key = LiliCourse.cardKey(selected);
+  const card = studyWords().find((item) => LiliCourse.cardKey(item) === key);
+  if (S.userCards.some((item) => LiliCourse.cardKey(item) === key) ||
+      allCards().some((item) => S.srs[item.id] && LiliCourse.cardKey(item) === key)) return toast('این کارت در فهرست مرور توست');
+  S.userCards.push({ id: card.id, f: card.f, b: card.b, e: selected.e || card.e, audio: card.audio });
   save();
   toast('فلش‌کارت برای مرور ذخیره شد');
 };
